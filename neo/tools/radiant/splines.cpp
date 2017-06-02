@@ -30,6 +30,10 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "splines.h"
+#include "QE3.H"
+#include "../../renderer/ImmediateMode.h"
+
+void drawText(const char* text, float scale, const idVec3& pos, const idVec3& color, int viewType);
 
 idCameraDef splineList;
 idCameraDef *g_splineList = &splineList;
@@ -40,17 +44,20 @@ glLabeledPoint
 ================
 */
 void glLabeledPoint(idVec4 &color, idVec3 &point, float size, const char *label) {
-	qglColor3fv( color.ToFloatPtr() );
-	qglPointSize( size );
-	qglBegin( GL_POINTS );
-	qglVertex3fv( point.ToFloatPtr() );
-	qglEnd();
+  fhImmediateMode im;
+	im.Color3fv( color.ToFloatPtr() );
+	glPointSize( size );
+	im.Begin( GL_POINTS );
+	im.Vertex3fv( point.ToFloatPtr() );
+	im.End();
 	idVec3 v = point;
 	v.x += 1;
 	v.y += 1;
 	v.z += 1;
-	qglRasterPos3fv( v.ToFloatPtr() );
-	qglCallLists( strlen(label), GL_UNSIGNED_BYTE, label );
+
+  drawText(label, 1.0f, v, color.ToVec3(), 2);
+//	glRasterPos3fv( v.ToFloatPtr() );
+//	glCallLists( strlen(label), GL_UNSIGNED_BYTE, label );
 }
 
 /*
@@ -67,34 +74,52 @@ void glBox(idVec4 &color, idVec3 &point, float size) {
 	maxs[0] += size;
 	maxs[1] -= size;
 	maxs[2] += size;
-	idVec4	saveColor;
-	qglGetFloatv(GL_CURRENT_COLOR, saveColor.ToFloatPtr());
-	qglColor3fv( color.ToFloatPtr() );
-	qglBegin(GL_LINE_LOOP);
-	qglVertex3f(mins[0],mins[1],mins[2]);
-	qglVertex3f(maxs[0],mins[1],mins[2]);
-	qglVertex3f(maxs[0],maxs[1],mins[2]);
-	qglVertex3f(mins[0],maxs[1],mins[2]);
-	qglEnd();
-	qglBegin(GL_LINE_LOOP);
-	qglVertex3f(mins[0],mins[1],maxs[2]);
-	qglVertex3f(maxs[0],mins[1],maxs[2]);
-	qglVertex3f(maxs[0],maxs[1],maxs[2]);
-	qglVertex3f(mins[0],maxs[1],maxs[2]);
-	qglEnd();
+#if 0
+  fhImmediateMode im;
+  im.Color4fv(color.ToFloatPtr());
+  im.Begin(GL_LINE_LOOP);
+  im.Vertex3f(mins[0],mins[1],mins[2]);
+  im.Vertex3f(maxs[0],mins[1],mins[2]);
+  im.Vertex3f(maxs[0],maxs[1],mins[2]);
+  im.Vertex3f(mins[0],maxs[1],mins[2]);
+  im.End();
+  im.Begin(GL_LINE_LOOP);
+  im.Vertex3f(mins[0],mins[1],maxs[2]);
+  im.Vertex3f(maxs[0],mins[1],maxs[2]);
+  im.Vertex3f(maxs[0],maxs[1],maxs[2]);
+  im.Vertex3f(mins[0],maxs[1],maxs[2]);
+  im.End();
 
-	qglBegin(GL_LINES);
-  	qglVertex3f(mins[0],mins[1],mins[2]);
-	qglVertex3f(mins[0],mins[1],maxs[2]);
-	qglVertex3f(mins[0],maxs[1],maxs[2]);
-	qglVertex3f(mins[0],maxs[1],mins[2]);
-	qglVertex3f(maxs[0],mins[1],mins[2]);
-	qglVertex3f(maxs[0],mins[1],maxs[2]);
-	qglVertex3f(maxs[0],maxs[1],maxs[2]);
-	qglVertex3f(maxs[0],maxs[1],mins[2]);
-	qglEnd();
-	qglColor4fv(saveColor.ToFloatPtr());
+  im.Begin(GL_LINES);
+  im.Vertex3f(mins[0],mins[1],mins[2]);
+  im.Vertex3f(mins[0],mins[1],maxs[2]);
+  im.Vertex3f(mins[0],maxs[1],maxs[2]);
+  im.Vertex3f(mins[0],maxs[1],mins[2]);
+  im.Vertex3f(maxs[0],mins[1],mins[2]);
+  im.Vertex3f(maxs[0],mins[1],maxs[2]);
+  im.Vertex3f(maxs[0],maxs[1],maxs[2]);
+  im.Vertex3f(maxs[0],maxs[1],mins[2]);
+  im.End();
+#else
+  idVec3 points[8];
+  idBounds(mins, maxs).ToPoints(points);
 
+  g_qeglobals.lineBuffer.Add(points[0], points[1], color);
+  g_qeglobals.lineBuffer.Add(points[1], points[2], color);
+  g_qeglobals.lineBuffer.Add(points[2], points[3], color);
+  g_qeglobals.lineBuffer.Add(points[3], points[0], color);
+
+  g_qeglobals.lineBuffer.Add(points[4], points[5], color);
+  g_qeglobals.lineBuffer.Add(points[5], points[6], color);
+  g_qeglobals.lineBuffer.Add(points[6], points[7], color);
+  g_qeglobals.lineBuffer.Add(points[7], points[4], color);
+
+  g_qeglobals.lineBuffer.Add(points[0], points[4], color);
+  g_qeglobals.lineBuffer.Add(points[1], points[5], color);
+  g_qeglobals.lineBuffer.Add(points[2], points[6], color);
+  g_qeglobals.lineBuffer.Add(points[3], points[7], color);
+
+#endif
 }
 
 /*
@@ -439,14 +464,14 @@ void idSplineList::draw(bool editMode) {
 	}
 
 
-	qglColor3fv( controlColor.ToFloatPtr() );
-	qglPointSize( 5 );
+	glColor3fv( controlColor.ToFloatPtr() );
+	glPointSize( 5 );
 	
-	qglBegin(GL_POINTS);
+	glBegin(GL_POINTS);
 	for (i = 0; i < controlPoints.Num(); i++) {
-		qglVertex3fv( (*controlPoints[i]).ToFloatPtr() );
+		glVertex3fv( (*controlPoints[i]).ToFloatPtr() );
 	}
-	qglEnd();
+	glEnd();
 	
 	if (editMode) {
 		for(i = 0; i < controlPoints.Num(); i++) {
@@ -455,22 +480,22 @@ void idSplineList::draw(bool editMode) {
 	}
 
 	//Draw the curve
-	qglColor3fv( pathColor.ToFloatPtr() );
-	qglBegin(GL_LINE_STRIP);
+	glColor3fv( pathColor.ToFloatPtr() );
+	glBegin(GL_LINE_STRIP);
 	int count = splinePoints.Num();
 	for (i = 0; i < count; i++) {
-		qglVertex3fv( (*splinePoints[i]).ToFloatPtr() );
+		glVertex3fv( (*splinePoints[i]).ToFloatPtr() );
 	}
-	qglEnd();
+	glEnd();
 
 	if (editMode) {
-		qglColor3fv( segmentColor.ToFloatPtr() );
-		qglPointSize(3);
-		qglBegin(GL_POINTS);
+		glColor3fv( segmentColor.ToFloatPtr() );
+		glPointSize(3);
+		glBegin(GL_POINTS);
 		for (i = 0; i < count; i++) {
-			qglVertex3fv( (*splinePoints[i]).ToFloatPtr() );
+			glVertex3fv( (*splinePoints[i]).ToFloatPtr() );
 		}
-		qglEnd();
+		glEnd();
 	}
 	if (count > 0) {
 		//assert(activeSegment >=0 && activeSegment < count);
@@ -1650,10 +1675,10 @@ idInterpolatedPosition::draw
 void idInterpolatedPosition::draw( bool editMode ) {
 	glLabeledPoint(colorBlue, startPos, (editMode) ? 5 : 3, "Start interpolated");
 	glLabeledPoint(colorBlue, endPos, (editMode) ? 5 : 3, "End interpolated");
-	qglBegin(GL_LINES);
-	qglVertex3fv( startPos.ToFloatPtr() );
-	qglVertex3fv( endPos.ToFloatPtr() );
-	qglEnd();
+	glBegin(GL_LINES);
+	glVertex3fv( startPos.ToFloatPtr() );
+	glVertex3fv( endPos.ToFloatPtr() );
+	glEnd();
 }
 
 /*

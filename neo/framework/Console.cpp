@@ -33,7 +33,7 @@ void SCR_DrawTextLeftAlign( float &y, const char *text, ... ) id_attribute((form
 void SCR_DrawTextRightAlign( float &y, const char *text, ... ) id_attribute((format(printf,2,3)));
 
 #define	LINE_WIDTH				78
-#define	NUM_CON_TIMES			4
+#define	NUM_CON_TIMES			20
 #define	CON_TEXTSIZE			0x30000
 #define	TOTAL_LINES				(CON_TEXTSIZE / LINE_WIDTH)
 #define CONSOLE_FIRSTREPEAT		200
@@ -73,7 +73,7 @@ private:
 	void				Top();
 	void				Bottom();
 
-	void				DrawInput();
+	void				DrawInput(float fontScale);
 	void				DrawNotify();
 	void				DrawSolidConsole( float frac );
 
@@ -113,6 +113,8 @@ private:
 	static idCVar		con_speed;
 	static idCVar		con_notifyTime;
 	static idCVar		con_noPrint;
+  static idCVar		con_fontScale;
+  static idCVar		con_size;
 
 	const idMaterial *	whiteShader;
 	const idMaterial *	consoleShader;
@@ -124,10 +126,12 @@ idConsole	*console = &localConsole;
 idCVar idConsoleLocal::con_speed( "con_speed", "3", CVAR_SYSTEM, "speed at which the console moves up and down" );
 idCVar idConsoleLocal::con_notifyTime( "con_notifyTime", "3", CVAR_SYSTEM, "time messages are displayed onscreen when console is pulled up" );
 #ifdef DEBUG
-idCVar idConsoleLocal::con_noPrint( "con_noPrint", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "print on the console but not onscreen when console is pulled up" );
+idCVar idConsoleLocal::con_noPrint( "con_noPrint", "0", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT|CVAR_ARCHIVE, "print on the console but not onscreen when console is pulled up" );
 #else
-idCVar idConsoleLocal::con_noPrint( "con_noPrint", "1", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT, "print on the console but not onscreen when console is pulled up" );
+idCVar idConsoleLocal::con_noPrint( "con_noPrint", "1", CVAR_BOOL|CVAR_SYSTEM|CVAR_NOCHEAT|CVAR_ARCHIVE, "print on the console but not onscreen when console is pulled up" );
 #endif
+idCVar idConsoleLocal::con_fontScale( "con_fontScale", "0.5", CVAR_SYSTEM|CVAR_FLOAT|CVAR_NOCHEAT|CVAR_ARCHIVE, "scale of console font" );
+idCVar idConsoleLocal::con_size("con_size", "0.3", CVAR_SYSTEM|CVAR_FLOAT|CVAR_NOCHEAT|CVAR_ARCHIVE, "screen size of console");
 
 
 
@@ -169,16 +173,13 @@ void SCR_DrawTextRightAlign( float &y, const char *text, ... ) {
 	y += SMALLCHAR_HEIGHT + 4;
 }
 
-
-
-
 /*
 ==================
 SCR_DrawFPS
 ==================
 */
 #define	FPS_FRAMES	4
-float SCR_DrawFPS( float y ) {
+static float SCR_DrawFPS( int mode ) {
 	char		*s;
 	int			w;
 	static int	previousTimes[FPS_FRAMES];
@@ -196,6 +197,10 @@ float SCR_DrawFPS( float y ) {
 
 	previousTimes[index % FPS_FRAMES] = frameTime;
 	index++;
+
+	float y = 0;
+	int x = 0;
+
 	if ( index > FPS_FRAMES ) {
 		// average multiple frames together to smooth changes out a bit
 		total = 0;
@@ -208,13 +213,95 @@ float SCR_DrawFPS( float y ) {
 		fps = 10000 * FPS_FRAMES / total;
 		fps = (fps + 5)/10;
 
-		s = va( "%ifps", fps );
+		if(mode == 1) {
+			s = va( "%3dfps", fps );
+			x = 600;
+		} 
+		else if(mode == 2) {
+			s = va( "%4.2fms", static_cast<float>(total) / FPS_FRAMES );
+			x = 600;
+		}
+		else {
+			s = va( "%3dfps (%4.2fms)", fps, static_cast<float>(total) / FPS_FRAMES );			
+			x = 565;
+		}
+
 		w = strlen( s ) * BIGCHAR_WIDTH;
 
-		renderSystem->DrawBigStringExt( 635 - w, idMath::FtoiFast( y ) + 2, s, colorWhite, true, localConsole.charSetShader);
+		renderSystem->DrawScaledStringExt( x, idMath::FtoiFast( y ) + 2, s, colorWhite, true, localConsole.charSetShader, 0.55f );
 	}
 
 	return y + BIGCHAR_HEIGHT + 4;
+}
+
+/*
+==================
+SCR_DrawBackEndStats
+==================
+*/
+float SCR_DrawBackEndStats( float y ) {
+
+	int ypos = idMath::FtoiFast( y );
+	const float lineHeight = 11;
+
+	char buffer[128];
+	const float xpos = 440;
+	const float fontScale = 0.55f;
+
+	auto PrintStats = [&](const char* name, const backEndGroupStats_t& stats, const idVec4& color) {
+		const float milliseconds = stats.time * 0.001f;
+		sprintf( buffer, "%-15s  %4d  %4d  %6d  %6.2f", name, stats.passes, stats.drawcalls, stats.tris, milliseconds );
+		renderSystem->DrawScaledStringExt( xpos, ypos, buffer, color, true, localConsole.charSetShader, fontScale );
+		ypos += lineHeight;
+	};
+
+
+#define TIME_FRAMES 10
+	static backEndStats_t previous[TIME_FRAMES];
+	static unsigned frame = 0;
+
+	const auto stats = renderSystem->GetBackEndStats(); 
+	previous[frame] = stats;
+	frame = (frame + 1) % TIME_FRAMES;
+
+	backEndStats_t avg;
+	for(int j=0; j<TIME_FRAMES; ++j) {
+		avg += previous[j];
+	}
+
+	avg /= TIME_FRAMES;	
+
+	backEndGroupStats_t sm_total;
+	for(int i=0; i<3; ++i) {
+		sm_total += avg.groups[backEndGroup::ShadowMap0 + i];
+	}
+
+	backEndGroupStats_t total;
+	for (int i = 0; i < backEndGroup::NUM; ++i) {
+		total += avg.groups[i];
+	}
+
+	sprintf( buffer, "                    p    dc    tris    time");
+	renderSystem->DrawScaledStringExt( xpos, ypos, buffer, colorWhite, true, localConsole.charSetShader, fontScale );
+	ypos += lineHeight;
+
+	PrintStats("depth prepass", avg.groups[backEndGroup::DepthPrepass], colorWhite);	
+	//PrintStats("stencil shadows", avg.groups[backEndGroup::StencilShadows], colorWhite);	
+	PrintStats("shadow maps", sm_total, colorWhite);
+	PrintStats("    0", avg.groups[backEndGroup::ShadowMap0], colorMdGrey);
+	PrintStats("    1", avg.groups[backEndGroup::ShadowMap1], colorMdGrey);
+	PrintStats("    2", avg.groups[backEndGroup::ShadowMap2], colorMdGrey);
+	PrintStats("interaction", avg.groups[backEndGroup::Interaction], colorWhite);
+	PrintStats("non-interaction", avg.groups[backEndGroup::NonInteraction], colorWhite);
+	//PrintStats("fog lights", avg.groups[backEndGroup::FogLight], colorWhite);
+	//PrintStats("blend lights", avg.groups[backEndGroup::BlendLight], colorWhite);
+	PrintStats("          total", total, colorWhite);
+/*
+	sprintf( buffer, "                      total time: %6.2fms", avg.totaltime * 0.001f );
+	renderSystem->DrawScaledStringExt( xpos, ypos, buffer, colorWhite, true, localConsole.charSetShader, fontScale );
+	ypos += lineHeight;
+*/
+	return ypos;
 }
 
 /*
@@ -772,7 +859,13 @@ bool	idConsoleLocal::ProcessEvent( const sysEvent_t *event, bool forceAccept ) {
 				// if the shift key is down, don't open the console as much
 				SetDisplayFraction( 0.2f );
 			} else {
-				SetDisplayFraction( 0.5f );
+        float consoleSize = con_size.GetFloat();
+        if(consoleSize < 0.1f)
+          consoleSize = 0.1f;
+        if(consoleSize > 1.0f)
+          consoleSize = 1.0f;
+
+				SetDisplayFraction( consoleSize );
 			}
 			cvarSystem->SetCVarBool( "ui_chat", true );
 		}
@@ -944,10 +1037,10 @@ DrawInput
 Draw the editline after a ] prompt
 ================
 */
-void idConsoleLocal::DrawInput() {
+void idConsoleLocal::DrawInput(float fontScale) {
 	int y, autoCompleteLength;
 
-	y = vislines - ( SMALLCHAR_HEIGHT * 2 );
+	y = vislines - ( SMALLCHAR_HEIGHT * 2 * fontScale );
 
 	if ( consoleField.GetAutoCompleteLength() != 0 ) {
 		autoCompleteLength = strlen( consoleField.GetBuffer() ) - consoleField.GetAutoCompleteLength();
@@ -955,17 +1048,17 @@ void idConsoleLocal::DrawInput() {
 		if ( autoCompleteLength > 0 ) {
 			renderSystem->SetColor4( .8f, .2f, .2f, .45f );
 
-			renderSystem->DrawStretchPic( 2 * SMALLCHAR_WIDTH + consoleField.GetAutoCompleteLength() * SMALLCHAR_WIDTH,
-							y + 2, autoCompleteLength * SMALLCHAR_WIDTH, SMALLCHAR_HEIGHT - 2, 0, 0, 0, 0, whiteShader );
+			renderSystem->DrawStretchPic( (2 * SMALLCHAR_WIDTH + consoleField.GetAutoCompleteLength() * SMALLCHAR_WIDTH) * fontScale,
+							y + 2 * fontScale, autoCompleteLength * SMALLCHAR_WIDTH * fontScale, (SMALLCHAR_HEIGHT - 2) * fontScale, 0, 0, 0, 0, whiteShader );
 
 		}
 	}
 
 	renderSystem->SetColor( idStr::ColorForIndex( C_COLOR_CYAN ) );
 
-	renderSystem->DrawSmallChar( 1 * SMALLCHAR_WIDTH, y, ']', localConsole.charSetShader );
+	renderSystem->DrawScaledChar( SMALLCHAR_WIDTH * fontScale, y, ']', localConsole.charSetShader, fontScale );
 
-	consoleField.Draw(2 * SMALLCHAR_WIDTH, y, SCREEN_WIDTH - 3 * SMALLCHAR_WIDTH, true, charSetShader );
+	consoleField.Draw(2 * SMALLCHAR_WIDTH * fontScale, y, SCREEN_WIDTH - 3 * SMALLCHAR_WIDTH * fontScale, true, charSetShader, fontScale );
 }
 
 
@@ -990,6 +1083,8 @@ void idConsoleLocal::DrawNotify() {
 	currentColor = idStr::ColorIndex( C_COLOR_WHITE );
 	renderSystem->SetColor( idStr::ColorForIndex( currentColor ) );
 
+  const float fontScale = con_fontScale.GetFloat();
+
 	v = 0;
 	for ( i = current-NUM_CON_TIMES+1; i <= current; i++ ) {
 		if ( i < 0 ) {
@@ -1013,10 +1108,10 @@ void idConsoleLocal::DrawNotify() {
 				currentColor = idStr::ColorIndex(text_p[x]>>8);
 				renderSystem->SetColor( idStr::ColorForIndex( currentColor ) );
 			}
-			renderSystem->DrawSmallChar( (x+1)*SMALLCHAR_WIDTH, v, text_p[x] & 0xff, localConsole.charSetShader );
+			renderSystem->DrawScaledChar( (x+1)*SMALLCHAR_WIDTH*fontScale, v, text_p[x] & 0xff, localConsole.charSetShader, fontScale );
 		}
 
-		v += SMALLCHAR_HEIGHT;
+    v += SMALLCHAR_HEIGHT * fontScale;
 	}
 
 	renderSystem->SetColor( colorCyan );
@@ -1063,30 +1158,34 @@ void idConsoleLocal::DrawSolidConsole( float frac ) {
 
 	renderSystem->SetColor( idStr::ColorForIndex( C_COLOR_CYAN ) );
 
-	idStr version = va("%s.%i", ENGINE_VERSION, BUILD_NUMBER);
+	idStr version = va("%s - %i", ENGINE_VERSION, BUILD_NUMBER);
 	i = version.Length();
 
+  float fontScale = con_fontScale.GetFloat();
+  if(fontScale < 0.2f)
+    fontScale = 0.2f;
+  if(fontScale > 2.0f)
+    fontScale = 2.0f;
+
 	for ( x = 0; x < i; x++ ) {
-		renderSystem->DrawSmallChar( SCREEN_WIDTH - ( i - x ) * SMALLCHAR_WIDTH, 
-			(lines-(SMALLCHAR_HEIGHT+SMALLCHAR_HEIGHT/2)), version[x], localConsole.charSetShader );
-
+		renderSystem->DrawScaledChar( SCREEN_WIDTH - ( i - x ) * SMALLCHAR_WIDTH * fontScale, 
+			(lines-(SMALLCHAR_HEIGHT+SMALLCHAR_HEIGHT/2)*fontScale), version[x], localConsole.charSetShader, fontScale );
 	}
-
 
 	// draw the text
 	vislines = lines;
-	rows = (lines-SMALLCHAR_WIDTH)/SMALLCHAR_WIDTH;		// rows of text to draw
+	rows = static_cast<int>((lines-SMALLCHAR_WIDTH)/SMALLCHAR_WIDTH);		// rows of text to draw
 
-	y = lines - (SMALLCHAR_HEIGHT*3);
+	y = lines - (SMALLCHAR_HEIGHT*3) * fontScale;
 
 	// draw from the bottom up
 	if ( display != current ) {
 		// draw arrows to show the buffer is backscrolled
 		renderSystem->SetColor( idStr::ColorForIndex( C_COLOR_CYAN ) );
-		for ( x = 0; x < LINE_WIDTH; x += 4 ) {
-			renderSystem->DrawSmallChar( (x+1)*SMALLCHAR_WIDTH, idMath::FtoiFast( y ), '^', localConsole.charSetShader );
+		for ( x = 0; x < LINE_WIDTH/fontScale; x += 4 ) {
+			renderSystem->DrawScaledChar( (x+1)*SMALLCHAR_WIDTH * fontScale, idMath::FtoiFast( y ), '^', localConsole.charSetShader, fontScale );
 		}
-		y -= SMALLCHAR_HEIGHT;
+		y -= SMALLCHAR_HEIGHT * fontScale;
 		rows--;
 	}
 	
@@ -1099,7 +1198,7 @@ void idConsoleLocal::DrawSolidConsole( float frac ) {
 	currentColor = idStr::ColorIndex( C_COLOR_WHITE );
 	renderSystem->SetColor( idStr::ColorForIndex( currentColor ) );
 
-	for ( i = 0; i < rows; i++, y -= SMALLCHAR_HEIGHT, row-- ) {
+	for ( i = 0; i < rows; i++, y -= (SMALLCHAR_HEIGHT * fontScale), row-- ) {
 		if ( row < 0 ) {
 			break;
 		}
@@ -1108,7 +1207,7 @@ void idConsoleLocal::DrawSolidConsole( float frac ) {
 			continue;	
 		}
 
-		text_p = text + (row % TOTAL_LINES)*LINE_WIDTH;
+		text_p = text + (row % TOTAL_LINES) * LINE_WIDTH;
 
 		for ( x = 0; x < LINE_WIDTH; x++ ) {
 			if ( ( text_p[x] & 0xff ) == ' ' ) {
@@ -1119,12 +1218,12 @@ void idConsoleLocal::DrawSolidConsole( float frac ) {
 				currentColor = idStr::ColorIndex(text_p[x]>>8);
 				renderSystem->SetColor( idStr::ColorForIndex( currentColor ) );
 			}
-			renderSystem->DrawSmallChar( (x+1)*SMALLCHAR_WIDTH, idMath::FtoiFast( y ), text_p[x] & 0xff, localConsole.charSetShader );
+			renderSystem->DrawScaledChar( (x+1)*SMALLCHAR_WIDTH * fontScale, idMath::FtoiFast( y ), text_p[x] & 0xff, localConsole.charSetShader, fontScale );
 		}
 	}
 
 	// draw the input prompt, user text, and cursor if desired
-	DrawInput();
+	DrawInput(fontScale);
 
 	renderSystem->SetColor( colorCyan );
 }
@@ -1168,8 +1267,12 @@ void	idConsoleLocal::Draw( bool forceFullScreen ) {
 		}
 	}
 
-	if ( com_showFPS.GetBool() ) {
-		y = SCR_DrawFPS( 0 );
+	if ( int mode = com_showFPS.GetInteger() ) {
+		y = SCR_DrawFPS( mode );		
+	}
+
+	if ( com_showBackendStats.GetBool() ) {
+		y = SCR_DrawBackEndStats( y );
 	}
 
 	if ( com_showMemoryUsage.GetBool() ) {

@@ -27,10 +27,11 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 // This is real evil but allows the code to inspect arbitrary class variables.
+#define _XKEYCHECK_H
 #define private		public
 #define protected	public
 
-#include "../../idlib/precompiled.h"
+#include "../precompiled.h"
 #pragma hdrstop
 
 #include "../Game_local.h"

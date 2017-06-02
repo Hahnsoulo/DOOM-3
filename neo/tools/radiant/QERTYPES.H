@@ -28,8 +28,6 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef _QERTYPE_H
 #define _QERTYPE_H
 
-#define	MAXPOINTS	16
-
 class texdef_t
 {
 public:
@@ -124,35 +122,6 @@ public:
 #define QER_TRANS     0x00000001
 #define QER_NOCARVE   0x00000002
 
-typedef struct qtexture_s
-{
-	struct	qtexture_s *next;
-	char	name[64];		// includes partial directory and extension
-	int		width,  height;
-	int		contents;
-	int		flags;
-	int		value;
-	int		texture_number;	// gl bind number
-  
-	// name of the .shader file
-  char  shadername[1024]; // old shader stuff
-  bool bFromShader;   // created from a shader
-  float fTrans;           // amount of transparency
-  int   nShaderFlags;     // qer_ shader flags
-	idVec3	color;			    // for flat shade mode
-	bool	inuse;		    // true = is present on the level
-
-	// cast this one to an IPluginQTexture if you are using it
-	// NOTE: casting can be done with a GETPLUGINQTEXTURE defined in isurfaceplugin.h
-	// TODO: if the __ISURFACEPLUGIN_H_ header is used, use a union { void *pData; IPluginQTexture *pPluginQTexture } kind of thing ?
-	void					*pData;
-
-	//++timo FIXME: this is the actual filename of the texture
-	// this will be removed after shader code cleanup
-	char filename[64];
-
-} qtexture_t;
-
 //++timo texdef and brushprimit_texdef are static
 // TODO : do dynamic ?
 typedef struct face_s
@@ -174,11 +143,6 @@ typedef struct face_s
 
 	// Timo new brush primit texdef
 	brushprimit_texdef_t	brushprimit_texdef;
-
-	// cast this one to an IPluginTexdef if you are using it
-	// NOTE: casting can be done with a GETPLUGINTEXDEF defined in isurfaceplugin.h
-	// TODO: if the __ISURFACEPLUGIN_H_ header is used, use a union { void *pData; IPluginTexdef *pPluginTexdef } kind of thing ?
-	void					*pData;
 } face_t;
 
 typedef struct {
@@ -225,8 +189,9 @@ typedef struct {
 #define PATCH_STYLEMASK    0xffff0000    // 
 
 
-struct brush_s;
-typedef struct brush_s brush_t;
+struct brush_t;
+
+struct fhSimpleVert;
 
 typedef struct {
 	int			width, height;		// in control points, not patches
@@ -240,15 +205,16 @@ typedef struct {
 	brush_t *	pSymbiot;
 	bool		bSelected;
 	bool		bOverlay;
-	int			nListID;
-	int			nListIDCam;
-	int			nListSelected;
+  idVec3* wireframeVerts;
+  int     wireframeVertNum;
+  fhSimpleVert* triangleVerts;
+  int triangleVertsNum;
 
 	idDict *	epairs;
 	// cast this one to an IPluginTexdef if you are using it
 	// NOTE: casting can be done with a GETPLUGINTEXDEF defined in isurfaceplugin.h
 	// TODO: if the __ISURFACEPLUGIN_H_ header is used, use a union { void *pData; IPluginTexdef *pPluginTexdef } kind of thing ?
-	void *		pData;
+
 	ID_INLINE idDrawVert &ctrl( int col, int row ) {
 		if ( col < 0 || col >= width || row < 0 || row >= height ) {
 			common->Warning( "patchMesh_t::ctrl: control point out of range" );
@@ -272,74 +238,6 @@ enum {
 	LIGHT_END,
 	LIGHT_CENTER
 };
-
-
-typedef struct brush_s
-{
-	struct brush_s	*prev, *next;	// links in active/selected
-	struct brush_s	*oprev, *onext;	// links in entity
-	brush_t *   list;				//keep a handy link to the list its in
-	struct entity_s	*owner;
-	idVec3 mins, maxs;
-
-	idVec3	lightCenter;			// for moving the shading center of point lights
-	idVec3	lightRight;
-	idVec3	lightTarget;
-	idVec3	lightUp;
-	idVec3	lightRadius;
-	idVec3	lightOffset;
-	idVec3	lightColor;
-	idVec3	lightStart;
-	idVec3	lightEnd;
-	bool	pointLight;
-	bool	startEnd;
-	int		lightTexture;
-
-	bool	trackLightOrigin;	// this brush is a special case light brush
-	bool	entityModel;
-
-	face_t  *brush_faces;
-
-	bool bModelFailed;
-	//
-	// curve brush extensions
-	// all are derived from brush_faces
-	bool	hiddenBrush;
-	bool	forceWireFrame;
-	bool	forceVisibile;
-
-	patchMesh_t *pPatch;
-	struct entity_s *pUndoOwner;
-
-	int undoId;						//undo ID
-	int redoId;						//redo ID
-	int ownerId;					//entityId of the owner entity for undo
-
-	// TTimo: HTREEITEM is MFC, some plugins really don't like it
-#ifdef QERTYPES_USE_MFC
-	int numberId;         // brush number
-	HTREEITEM itemOwner;  // owner for grouping
-#else
-	int numberId;
-	DWORD itemOwner;
-#endif
-
-	idRenderModel	*modelHandle;
-
-	// brush primitive only
-	idDict	epairs;
-
-} brush_t;
-
-
-#define	MAX_FLAGS	8
-
-
-typedef struct trimodel_t
-{
-  idVec3 v[3];
-  float  st[3][2];
-} trimodel;
 
 
 // eclass show flags
@@ -383,7 +281,6 @@ typedef struct eclass_s
 	struct eclass_s *next;
 	idStr	name;
 	bool	fixedsize;
-	bool	unknown;		// wasn't found in source
 	idVec3	mins, maxs;
 	idVec3	color;
 	texdef_t texdef;
@@ -393,14 +290,11 @@ typedef struct eclass_s
 	idRenderModel *modelHandle;
 	idRenderModel *entityModel;
 
-	int   nFrame;
 	unsigned int nShowFlags;
 	idStr	defMaterial;
 	idDict	args;
 	idDict	defArgs;
 	idList<evar_t> vars;
-
-	HMODULE	hPlug;
 } eclass_t;
 
 extern	eclass_t	*eclass;

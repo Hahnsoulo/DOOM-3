@@ -78,6 +78,8 @@ typedef struct {
 	int						expCulled;			// only for the experimental shadow buffer renderer
 
 	srfCullInfo_t			cullInfo;
+
+	bool                    isStaticWorldModel;
 } surfaceInteraction_t;
 
 
@@ -92,6 +94,7 @@ class idRenderLightLocal;
 
 class idInteraction {
 public:
+	bool					stencilShadowsCreated;
 	// this may be 0 if the light and entity do not actually intersect
 	// -1 = an untested interaction
 	int						numSurfaces;
@@ -111,7 +114,7 @@ public:
 	idInteraction *			entityPrev;
 
 public:
-							idInteraction( void );
+	idInteraction( void );
 
 	// because these are generated and freed each game tic for active elements all
 	// over the world, we use a custom pool allocater to avoid memory allocation overhead

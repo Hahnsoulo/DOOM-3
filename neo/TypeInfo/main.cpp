@@ -117,10 +117,23 @@ const char *Sys_Cwd( void ) {
 	_getcwd( cwd, sizeof( cwd ) - 1 );
 	cwd[sizeof( cwd ) - 1] = 0;
 
+  int l = strlen(cwd);
+/*
 	int i = idStr::FindText( cwd, CD_BASEDIR, false );
 	if ( i >= 0 ) {
 		cwd[i + strlen( CD_BASEDIR )] = '\0';
 	}
+*/
+  int i = idStr::FindText(cwd, CD_CODEDIR, false);
+  if(i>0)
+  {
+    --i;
+    while (i > 0 && (cwd[i] == '/' || cwd[i] == '\\'))
+    {
+      cwd[i] = '\0';
+      --i;
+    }
+  }
 
 	return cwd;
 }
@@ -269,15 +282,15 @@ int main( int argc, char** argv ) {
 	generator = new idTypeInfoGen;
 
 	if ( argc > 1 ) {
-		sourcePath = idStr( "../"SOURCE_CODE_BASE_FOLDER"/" ) + argv[1];
+		sourcePath = idStr( "../" SOURCE_CODE_BASE_FOLDER "/" ) + argv[1];
 	} else {
-		sourcePath = "../"SOURCE_CODE_BASE_FOLDER"/game";
+		sourcePath = "../" SOURCE_CODE_BASE_FOLDER "/game";
 	}
 
 	if ( argc > 2 ) {
-		fileName = idStr( "../"SOURCE_CODE_BASE_FOLDER"/" ) + argv[2];
+		fileName = idStr( "../" SOURCE_CODE_BASE_FOLDER "/" ) + argv[2];
 	} else {
-		fileName = "../"SOURCE_CODE_BASE_FOLDER"/game/gamesys/GameTypeInfo.h";
+		fileName = "../" SOURCE_CODE_BASE_FOLDER "/game/gamesys/GameTypeInfo.h";
 	}
 
 	if ( argc > 3 ) {

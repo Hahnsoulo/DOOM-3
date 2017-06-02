@@ -156,6 +156,12 @@ void idGameEdit::ParseSpawnArgsToRenderLight( const idDict *args, renderLight_t 
 	args->GetBool( "nospecular", "0", renderLight->noSpecular );
 	args->GetBool( "parallel", "0", renderLight->parallel );
 
+	renderLight->shadowMode = (shadowMode_t)args->GetInt("shadowMode", "0");
+	renderLight->shadowSoftness = args->GetFloat("shadowSoftness", "1");
+	renderLight->shadowBrightness = args->GetFloat("shadowBrightness", "0.15");
+	renderLight->shadowPolygonOffsetBias = args->GetFloat("shadowPolygonOffsetBias", "26");
+	renderLight->shadowPolygonOffsetFactor = args->GetFloat("shadowPolygonOffsetFactor", "4");
+
 	args->GetString( "texture", "lights/squarelight1", &texture );
 	// allow this to be NULL
 	renderLight->shader = declManager->FindMaterial( texture, false );
@@ -276,6 +282,8 @@ void idLight::Restore( idRestoreGame *savefile ) {
 		}
 	}
 
+	renderLight.occlusionModel = renderModelManager->CheckModel( va( "_occluder_%s", name.c_str() ) );
+
 	savefile->ReadVec3( localLightOrigin );
 	savefile->ReadMat3( localLightAxis );
 
@@ -349,6 +357,7 @@ void idLight::Spawn( void ) {
 	if ( name[ 0 ] ) {
 		// this will return 0 if not found
 		renderLight.prelightModel = renderModelManager->CheckModel( va( "_prelight_%s", name.c_str() ) );
+		renderLight.occlusionModel = renderModelManager->CheckModel( va( "_occluder_%s", name.c_str() ) );
 	}
 
 	spawnArgs.GetBool( "start_off", "0", start_off );
@@ -1137,9 +1146,10 @@ bool idLight::ClientReceiveEvent( int event, int time, const idBitMsg &msg ) {
 			BecomeBroken( NULL );
 			return true;
 		}
-		default: {
-			return idEntity::ClientReceiveEvent( event, time, msg );
-		}
+    default: {
+      break;
+    }
 	}
-	return false;
+
+  return idEntity::ClientReceiveEvent( event, time, msg );
 }

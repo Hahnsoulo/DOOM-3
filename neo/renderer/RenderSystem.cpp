@@ -29,6 +29,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "RenderList.h"
 
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
@@ -115,6 +116,7 @@ static void R_PerformanceCounters( void ) {
 
 	memset( &tr.pc, 0, sizeof( tr.pc ) );
 	memset( &backEnd.pc, 0, sizeof( backEnd.pc ) );
+	memset( &backEnd.stats, 0, sizeof( backEnd.stats ) );
 }
 
 
@@ -282,7 +284,7 @@ static void R_CheckCvars( void ) {
 	}
 
 	// check for changes to logging state
-	GLimp_EnableLogging( r_logFile.GetInteger() != 0 );
+	//GLimp_EnableLogging( r_logFile.GetInteger() != 0 );
 }
 
 /*
@@ -290,7 +292,7 @@ static void R_CheckCvars( void ) {
 idRenderSystemLocal::idRenderSystemLocal
 =============
 */
-idRenderSystemLocal::idRenderSystemLocal( void ) {
+idRenderSystemLocal::idRenderSystemLocal( void ) : backEndRendererMaxLight(999) {
 	Clear();
 }
 
@@ -374,6 +376,71 @@ GlobalToNormalizedDeviceCoordinates
 void idRenderSystemLocal::GetGLSettings( int& width, int& height ) {
 	width = glConfig.vidWidth;
 	height = glConfig.vidHeight;
+}
+
+/*
+=====================
+idRenderSystemLocal::DrawSmallChar
+
+small chars are drawn at native screen resolution
+=====================
+*/
+void idRenderSystemLocal::DrawScaledChar( int x, int y, int ch, const idMaterial *material, float scale ) {
+  int row, col;
+  float frow, fcol;
+  float size;
+
+  ch &= 255;
+
+  if ( ch == ' ' ) {
+    return;
+  }
+
+  if ( y < -SMALLCHAR_HEIGHT ) {
+    return;
+  }
+
+  row = ch >> 4;
+  col = ch & 15;
+
+  frow = row * 0.0625f;
+  fcol = col * 0.0625f;
+  size = 0.0625f;
+
+  DrawStretchPic( x, y, SMALLCHAR_WIDTH * scale, SMALLCHAR_HEIGHT * scale,
+    fcol, frow, 
+    fcol + size, frow + size, 
+    material );
+}
+
+void idRenderSystemLocal::DrawScaledStringExt( int x, int y, const char *string, const idVec4 &setColor, bool forceColor, const idMaterial *material, float scale ) {
+  idVec4		color;
+  const unsigned char	*s;
+  float			xx;
+
+  // draw the colored text
+  s = (const unsigned char*)string;
+  xx = x;
+  SetColor( setColor );
+  while ( *s ) {
+    if ( idStr::IsColor( (const char*)s ) ) {
+      if ( !forceColor ) {
+        if ( *(s+1) == C_COLOR_DEFAULT ) {
+          SetColor( setColor );
+        } else {
+          color = idStr::ColorForIndex( *(s+1) );
+          color[3] = setColor[3];
+          SetColor( color );
+        }
+      }
+      s += 2;
+      continue;
+    }
+    DrawScaledChar( idMath::FtoiFast(xx), y, *s, material, scale );
+    xx += SMALLCHAR_WIDTH * scale;
+    s++;
+  }
+  SetColor( colorWhite );
 }
 
 /*
@@ -527,96 +594,12 @@ void idRenderSystemLocal::DrawBigStringExt( int x, int y, const char *string, co
 //======================================================================================
 
 /*
-==================
-SetBackEndRenderer
-
-Check for changes in the back end renderSystem, possibly invalidating cached data
-==================
+====================
+BeginFrame
+====================
 */
-void idRenderSystemLocal::SetBackEndRenderer() {
-	if ( !r_renderer.IsModified() ) {
-		return;
-	}
-
-	bool oldVPstate = backEndRendererHasVertexPrograms;
-
-	backEndRenderer = BE_BAD;
-
-	if ( idStr::Icmp( r_renderer.GetString(), "arb" ) == 0 ) {
-		backEndRenderer = BE_ARB;
-	} else if ( idStr::Icmp( r_renderer.GetString(), "arb2" ) == 0 ) {
-		if ( glConfig.allowARB2Path ) {
-			backEndRenderer = BE_ARB2;
-		}
-	} else if ( idStr::Icmp( r_renderer.GetString(), "nv10" ) == 0 ) {
-		if ( glConfig.allowNV10Path ) {
-			backEndRenderer = BE_NV10;
-		}
-	} else if ( idStr::Icmp( r_renderer.GetString(), "nv20" ) == 0 ) {
-		if ( glConfig.allowNV20Path ) {
-			backEndRenderer = BE_NV20;
-		}
-	} else if ( idStr::Icmp( r_renderer.GetString(), "r200" ) == 0 ) {
-		if ( glConfig.allowR200Path ) {
-			backEndRenderer = BE_R200;
-		}
-	}
-
-	// fallback
-	if ( backEndRenderer == BE_BAD ) {
-		// choose the best
-		if ( glConfig.allowARB2Path ) {
-			backEndRenderer = BE_ARB2;
-		} else if ( glConfig.allowR200Path ) {
-			backEndRenderer = BE_R200;
-		} else if ( glConfig.allowNV20Path ) {
-			backEndRenderer = BE_NV20;
-		} else if ( glConfig.allowNV10Path ) {
-			backEndRenderer = BE_NV10;
-		} else {
-			// the others are considered experimental
-			backEndRenderer = BE_ARB;
-		}
-	}
-
-	backEndRendererHasVertexPrograms = false;
-	backEndRendererMaxLight = 1.0;
-
-	switch( backEndRenderer ) {
-	case BE_ARB:
-		common->Printf( "using ARB renderSystem\n" );
-		break;
-	case BE_NV10:
-		common->Printf( "using NV10 renderSystem\n" );
-		break;
-	case BE_NV20:
-		common->Printf( "using NV20 renderSystem\n" );
-		backEndRendererHasVertexPrograms = true;
-		break;
-	case BE_R200:
-		common->Printf( "using R200 renderSystem\n" );
-		backEndRendererHasVertexPrograms = true;
-		break;
-	case BE_ARB2:
-		common->Printf( "using ARB2 renderSystem\n" );
-		backEndRendererHasVertexPrograms = true;
-		backEndRendererMaxLight = 999;
-		break;
-	default:
-		common->FatalError( "SetbackEndRenderer: bad back end" );
-	}
-
-	// clear the vertex cache if we are changing between
-	// using vertex programs and not, because specular and
-	// shadows will be different data
-	if ( oldVPstate != backEndRendererHasVertexPrograms ) {
-		vertexCache.PurgeAll();
-		if ( primaryWorld ) {
-			primaryWorld->FreeInteractions();
-		}
-	}
-
-	r_renderer.ClearModified();
+void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
+	BeginFrame( windowWidth, windowHeight, windowWidth, windowHeight );
 }
 
 /*
@@ -624,15 +607,12 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 BeginFrame
 ====================
 */
-void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
+void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight, int renderWidth, int renderHeight ) {
 	setBufferCommand_t	*cmd;
 
 	if ( !glConfig.isInitialized ) {
 		return;
 	}
-
-	// determine which back end we will use
-	SetBackEndRenderer();
 
 	guiModel->Clear();
 
@@ -640,10 +620,16 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	if ( tiledViewport[0] ) {
 		windowWidth = tiledViewport[0];
 		windowHeight = tiledViewport[1];
+
+		renderWidth = windowWidth;
+		renderHeight = windowHeight;
 	}
 
 	glConfig.vidWidth = windowWidth;
 	glConfig.vidHeight = windowHeight;
+
+	glConfig.renderWidth = renderWidth;
+	glConfig.renderHeight = renderHeight;
 
 	renderCrops[0].x = 0;
 	renderCrops[0].y = 0;
@@ -656,8 +642,9 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 		int	w = SCREEN_WIDTH * r_screenFraction.GetInteger() / 100.0f;
 		int h = SCREEN_HEIGHT * r_screenFraction.GetInteger() / 100.0f;
 		CropRenderSize( w, h );
-	}
+	}  
 
+	backEnd.glslReplaceArb2 = r_glslReplaceArb2.GetBool();
 
 	// this is the ONLY place this is modified
 	frameCount++;
@@ -680,12 +667,6 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 	cmd = (setBufferCommand_t *)R_GetCommandBuffer( sizeof( *cmd ) );
 	cmd->commandId = RC_SET_BUFFER;
 	cmd->frameCount = frameCount;
-
-	if ( r_frontBuffer.GetBool() ) {
-		cmd->buffer = (int)GL_FRONT;
-	} else {
-		cmd->buffer = (int)GL_BACK;
-	}
 }
 
 void idRenderSystemLocal::WriteDemoPics() {
@@ -746,6 +727,9 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 
 	// we can now release the vertexes used this frame
 	vertexCache.EndFrame();
+
+	// release all memory allocated for render lists
+	fhBaseRenderList::EndFrame();
 
 	if ( session->writeDemo ) {
 		session->writeDemo->WriteInt( DS_RENDER );
@@ -960,13 +944,13 @@ void idRenderSystemLocal::CaptureRenderToFile( const char *fileName, bool fixAlp
 	guiModel->Clear();
 	R_IssueRenderCommands();
 
-	qglReadBuffer( GL_BACK );
+	glReadBuffer( GL_BACK );
 
 	// include extra space for OpenGL padding to word boundaries
 	int	c = ( rc->width + 3 ) * rc->height;
 	byte *data = (byte *)R_StaticAlloc( c * 3 );
 	
-	qglReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data ); 
+	glReadPixels( rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data ); 
 
 	byte *data2 = (byte *)R_StaticAlloc( c * 4 );
 
@@ -1035,7 +1019,16 @@ bool idRenderSystemLocal::UploadImage( const char *imageName, const byte *data, 
 	if ( !image ) {
 		return false;
 	}
-	image->UploadScratch( data, width, height );
+	image->UploadScratch( 0, data, width, height );
 	image->SetImageFilterAndRepeat();
 	return true;
+}
+
+/*
+===============
+idRenderSystemLocal::GetBackEndStats
+===============
+*/
+backEndStats_t idRenderSystemLocal::GetBackEndStats() const {
+	return backEnd.stats;
 }

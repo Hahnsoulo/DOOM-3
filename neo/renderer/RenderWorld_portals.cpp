@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "ImmediateMode.h"
 
 /*
 
@@ -589,16 +590,11 @@ have their scissor
 ===================
 */
 void idRenderWorldLocal::AddAreaEntityRefs( int areaNum, const portalStack_t *ps ) {
-	areaReference_t		*ref;
-	idRenderEntityLocal	*entity;
-	portalArea_t		*area;
-	viewEntity_t		*vEnt;
-	idBounds			b;
 
-	area = &portalAreas[ areaNum ];
+	portalArea_t* area = &portalAreas[ areaNum ];
 
-	for ( ref = area->entityRefs.areaNext ; ref != &area->entityRefs ; ref = ref->areaNext ) {
-		entity = ref->entity;
+	for ( areaReference_t* ref = area->entityRefs.areaNext ; ref != &area->entityRefs ; ref = ref->areaNext ) {
+		idRenderEntityLocal* entity = ref->entity;
 
 		// debug tool to allow viewing of only one entity at a time
 		if ( r_singleEntity.GetInteger() >= 0 && r_singleEntity.GetInteger() != entity->index ) {
@@ -627,7 +623,7 @@ void idRenderWorldLocal::AddAreaEntityRefs( int areaNum, const portalStack_t *ps
 			continue;
 		}
 
-		vEnt = R_SetEntityDefViewEntity( entity );
+		viewEntity_t* vEnt = R_SetEntityDefViewEntity( entity );
 
 		// possibly expand the scissor rect
 		vEnt->scissorRect.Union( ps->rect );
@@ -721,15 +717,11 @@ This is the only point where lights get added to the viewLights list
 ===================
 */
 void idRenderWorldLocal::AddAreaLightRefs( int areaNum, const portalStack_t *ps ) {
-	areaReference_t		*lref;
-	portalArea_t		*area;
-	idRenderLightLocal			*light;
-	viewLight_t			*vLight;
 
-	area = &portalAreas[ areaNum ];
+	portalArea_t* area = &portalAreas[ areaNum ];
 
-	for ( lref = area->lightRefs.areaNext ; lref != &area->lightRefs ; lref = lref->areaNext ) {
-		light = lref->light;
+	for ( areaReference_t* lref = area->lightRefs.areaNext ; lref != &area->lightRefs ; lref = lref->areaNext ) {
+		idRenderLightLocal* light = lref->light;
 
 		// debug tool to allow viewing of only one light at a time
 		if ( r_singleLight.GetInteger() >= 0 && r_singleLight.GetInteger() != light->index ) {
@@ -751,7 +743,7 @@ void idRenderWorldLocal::AddAreaLightRefs( int areaNum, const portalStack_t *ps 
 			continue;
 		}
 
-		vLight = R_SetLightDefViewLight( light );
+		viewLight_t* vLight = R_SetLightDefViewLight( light );
 
 		// expand the scissor rect
 		vLight->scissorRect.Union( ps->rect );
@@ -1055,19 +1047,20 @@ void idRenderWorldLocal::ShowPortals() {
 				continue;
 			}
 
+      fhImmediateMode im;
 			if ( portalAreas[ p->intoArea ].viewCount != tr.viewCount ) {
 				// red = can't see
-				qglColor3f( 1, 0, 0 );
+				im.Color3f( 1, 0, 0 );
 			} else {
 				// green = see through
-				qglColor3f( 0, 1, 0 );
+				im.Color3f( 0, 1, 0 );
 			}
 
-			qglBegin( GL_LINE_LOOP );
+			im.Begin( GL_LINE_LOOP );
 			for ( j = 0 ; j < w->GetNumPoints() ; j++ ) {
-				qglVertex3fv( (*w)[j].ToFloatPtr() );
+				im.Vertex3fv( (*w)[j].ToFloatPtr() );
 			}
-			qglEnd();
+			im.End();
 		}
 	}
 }

@@ -3,6 +3,7 @@
 
 Doom 3 GPL Source Code
 Copyright (C) 1999-2011 id Software LLC, a ZeniMax Media company. 
+Copyright (C) 2016 Johannes Ohlemacher (http://github.com/eXistence/fhDOOM)
 
 This file is part of the Doom 3 GPL Source Code (?Doom 3 Source Code?).  
 
@@ -30,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "ImageProgram.h"
 
 const char *imageFilter[] = {
 	"GL_LINEAR_MIPMAP_NEAREST",
@@ -49,10 +51,10 @@ idCVar idImageManager::image_forceDownSize( "image_forceDownSize", "0", CVAR_REN
 idCVar idImageManager::image_roundDown( "image_roundDown", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "round bad sizes down to nearest power of two" );
 idCVar idImageManager::image_colorMipLevels( "image_colorMipLevels", "0", CVAR_RENDERER | CVAR_BOOL, "development aid to see texture mip usage" );
 idCVar idImageManager::image_preload( "image_preload", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "if 0, dynamically load all images" );
-idCVar idImageManager::image_useCompression( "image_useCompression", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = force everything to high quality" );
+idCVar idImageManager::image_useCompression( "image_useCompression", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "0 = force everything to high quality" );
 idCVar idImageManager::image_useAllFormats( "image_useAllFormats", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "allow alpha/intensity/luminance/luminance+alpha" );
-idCVar idImageManager::image_useNormalCompression( "image_useNormalCompression", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2 = use rxgb compression for normal maps, 1 = use 256 color compression for normal maps if available" );
-idCVar idImageManager::image_usePrecompressedTextures( "image_usePrecompressedTextures", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use .dds files if present" );
+idCVar idImageManager::image_useNormalCompression( "image_useNormalCompression", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "2 = use rxgb compression for normal maps, 1 = use 256 color compression for normal maps if available" );
+idCVar idImageManager::image_usePrecompressedTextures( "image_usePrecompressedTextures", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use .dds files if present" );
 idCVar idImageManager::image_writePrecompressedTextures( "image_writePrecompressedTextures", "0", CVAR_RENDERER | CVAR_BOOL, "write .dds files if necessary" );
 idCVar idImageManager::image_writeNormalTGA( "image_writeNormalTGA", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final normal maps for debugging" );
 idCVar idImageManager::image_writeNormalTGAPalletized( "image_writeNormalTGAPalletized", "0", CVAR_RENDERER | CVAR_BOOL, "write .tgas of the final palletized normal maps for debugging" );
@@ -72,7 +74,6 @@ idCVar idImageManager::image_downSizeLimit( "image_downSizeLimit", "256", CVAR_R
 // a private virtual subclass
 idImageManager	imageManager;
 idImageManager	*globalImages = &imageManager;
-
 
 enum IMAGE_CLASSIFICATION {
 	IC_NPC,
@@ -124,6 +125,49 @@ static int ClassifyImage( const char *name ) {
 
 /*
 ================
+R_JitterImage
+
+Creates a jitter image where each pixel is a random 2D rotation.
+The red channel contains cosine and the green channel sine of
+a rotation, so it's easy to build a 2D rotation matrix from it.
+
+cosine and sine are compressed from [-1, 1] range to [0, 255] range
+to fit into simple RGB(A) textures.
+
+Blue and alpha channel are not used yet. Could be used to store a second rotation
+or to increase precision?
+
+TODO(johl): using floating point RG texture format provides a lot more precision
+            and we don't need to compress the range.
+================
+*/
+static void R_JitterImage( idImage *image ) {
+
+	static const int jitterSize = 1024;
+
+	byte* data = new byte[jitterSize * jitterSize * 4];
+
+	idRandom random( 13 );
+
+	for (int x = 0; x < jitterSize * jitterSize * 4; x += 4) {
+		float rad = DEG2RAD( random.RandomInt( 359 ) );
+		float sine = idMath::Sin( rad );
+		float cosine = idMath::Cos( rad );
+
+		data[x + 0] = static_cast<byte>((cosine + 1) * 128);
+		data[x + 1] = static_cast<byte>((sine + 1) * 128);
+		data[x + 2] = 255;
+		data[x + 3] = 255;		
+	}
+
+	image->GenerateImage( data, jitterSize, jitterSize,
+		TF_NEAREST, false, TR_REPEAT, TD_HIGH_QUALITY );
+
+	delete[] data;
+}
+
+/*
+================
 R_RampImage
 
 Creates a 0-255 ramp image
@@ -146,78 +190,6 @@ static void R_RampImage( idImage *image ) {
 
 /*
 ================
-R_SpecularTableImage
-
-Creates a ramp that matches our fudged specular calculation
-================
-*/
-static void R_SpecularTableImage( idImage *image ) {
-	int		x;
-	byte	data[256][4];
-
-	for (x=0 ; x<256 ; x++) {
-		float f = x/255.f;
-#if 0
-		f = pow(f, 16);
-#else
-		// this is the behavior of the hacked up fragment programs that
-		// can't really do a power function
-		f = (f-0.75)*4;
-		if ( f < 0 ) {
-			f = 0;
-		}
-		f = f * f;
-#endif
-		int		b = (int)(f * 255);
-
-		data[x][0] = 
-		data[x][1] = 
-		data[x][2] = 
-		data[x][3] = b;
-	}
-
-	image->GenerateImage( (byte *)data, 256, 1, 
-		TF_LINEAR, false, TR_CLAMP, TD_HIGH_QUALITY );
-}
-
-
-/*
-================
-R_Specular2DTableImage
-
-Create a 2D table that calculates ( reflection dot , specularity )
-================
-*/
-static void R_Specular2DTableImage( idImage *image ) {
-	int		x, y;
-	byte	data[256][256][4];
-
-	memset( data, 0, sizeof( data ) );
-		for ( x = 0 ; x < 256 ; x++ ) {
-			float f = x / 255.0f;
-		for ( y = 0; y < 256; y++ ) {
-
-			int b = (int)( pow( f, y ) * 255.0f );
-			if ( b == 0 ) {
-				// as soon as b equals zero all remaining values in this column are going to be zero
-				// we early out to avoid pow() underflows
-				break;
-			}
-
-			data[y][x][0] = 
-			data[y][x][1] = 
-			data[y][x][2] = 
-			data[y][x][3] = b;
-		}
-	}
-
-	image->GenerateImage( (byte *)data, 256, 256, TF_LINEAR, false, TR_CLAMP, TD_HIGH_QUALITY );
-}
-
-
-
-/*
-================
 R_AlphaRampImage
 
 Creates a 0-255 ramp image
@@ -237,8 +209,6 @@ static void R_AlphaRampImage( idImage *image ) {
 	image->GenerateImage( (byte *)data, 256, 1, 
 		TF_NEAREST, false, TR_CLAMP, TD_HIGH_QUALITY );
 }
-
-
 
 /*
 ==================
@@ -360,13 +330,13 @@ static void R_BorderClampImage( idImage *image ) {
 		TF_LINEAR /* TF_NEAREST */, false, TR_CLAMP_TO_BORDER, TD_DEFAULT );
 
 	if ( !glConfig.isInitialized ) {
-		// can't call qglTexParameterfv yet
+		// can't call glTexParameterfv yet
 		return;
 	}
 	// explicit zero border
 	float	color[4];
 	color[0] = color[1] = color[2] = color[3] = 0;
-	qglTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, color );
+	//glSamplerParameterfv(image->samplernum, GL_TEXTURE_BORDER_COLOR, color );	
 }
 
 static void R_RGBA8Image( idImage *image ) {
@@ -382,7 +352,7 @@ static void R_RGBA8Image( idImage *image ) {
 		TF_DEFAULT, false, TR_REPEAT, TD_HIGH_QUALITY );
 }
 
-static void R_RGB8Image( idImage *image ) {
+static void R_Depth( idImage *image ) {
 	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
 
 	memset( data, 0, sizeof( data ) );
@@ -392,7 +362,7 @@ static void R_RGB8Image( idImage *image ) {
 	data[0][0][3] = 255;
 
 	image->GenerateImage( (byte *)data, DEFAULT_SIZE, DEFAULT_SIZE, 
-		TF_DEFAULT, false, TR_REPEAT, TD_HIGH_QUALITY );
+		TF_DEFAULT, false, TR_CLAMP, TD_HIGH_QUALITY );
 }
 
 static void R_AlphaNotchImage( idImage *image ) {
@@ -425,28 +395,6 @@ static void R_FlatNormalImage( idImage *image ) {
 	image->GenerateImage( (byte *)data, 2, 2, 
 		TF_DEFAULT, true, TR_REPEAT, TD_HIGH_QUALITY );
 }
-
-static void R_AmbientNormalImage( idImage *image ) {
-	byte	data[DEFAULT_SIZE][DEFAULT_SIZE][4];
-	int		i;
-
-	int red = ( globalImages->image_useNormalCompression.GetInteger() == 1 ) ? 0 : 3;
-	int alpha = ( red == 0 ) ? 3 : 0;
-	// flat normal map for default bunp mapping
-	for ( i = 0 ; i < 4 ; i++ ) {
-		data[0][i][red] = (byte)(255 * tr.ambientLightVector[0]);
-		data[0][i][1] = (byte)(255 * tr.ambientLightVector[1]);
-		data[0][i][2] = (byte)(255 * tr.ambientLightVector[2]);
-		data[0][i][alpha] = 255;
-	}
-	const byte	*pics[6];
-	for ( i = 0 ; i < 6 ; i++ ) {
-		pics[i] = data[0][0];
-	}
-	// this must be a cube map for fragment programs to simply substitute for the normalization cube map
-	image->GenerateCubeImage( pics, 2, TF_DEFAULT, true, TD_HIGH_QUALITY );
-}
-
 
 static void CreateSquareLight( void ) {
 	byte		*buffer;
@@ -639,43 +587,6 @@ static void getCubeVector(int i, int cubesize, int x, int y, float *vector) {
   vector[1] *= mag;
   vector[2] *= mag;
 }
-
-/* Initialize a cube map texture object that generates RGB values
- * that when expanded to a [-1,1] range in the register combiners
- * form a normalized vector matching the per-pixel vector used to
- * access the cube map.
- */
-static void makeNormalizeVectorCubeMap( idImage *image ) {
-	float vector[3];
-	int i, x, y;
-	byte	*pixels[6];
-	int		size;
-
-	size = NORMAL_MAP_SIZE;
-
-	pixels[0] = (GLubyte*) Mem_Alloc(size*size*4*6);
-
-	for (i = 0; i < 6; i++) {
-		pixels[i] = pixels[0] + i*size*size*4;
-		for (y = 0; y < size; y++) {
-		  for (x = 0; x < size; x++) {
-			getCubeVector(i, size, x, y, vector);
-			pixels[i][4*(y*size+x) + 0] = (byte)(128 + 127*vector[0]);
-			pixels[i][4*(y*size+x) + 1] = (byte)(128 + 127*vector[1]);
-			pixels[i][4*(y*size+x) + 2] = (byte)(128 + 127*vector[2]);
-			pixels[i][4*(y*size+x) + 3] = 255;
-		  }
-		}
-	}
-
-	image->GenerateCubeImage( (const byte **)pixels, size,
-						   TF_LINEAR, false, TD_HIGH_QUALITY ); 
-
-	Mem_Free(pixels[0]);
-}
-
-
-
 
 /*
 ================
@@ -911,7 +822,7 @@ void R_QuadraticImage( idImage *image ) {
 
 
 typedef struct {
-	char *name;
+	const char *name;
 	int	minimize, maximize;
 } filterName_t;
 
@@ -978,11 +889,11 @@ static filterName_t textureFilters[] = {
 		case TT_2D:
 			texEnum = GL_TEXTURE_2D;
 			break;
-		case TT_3D:
-			texEnum = GL_TEXTURE_3D;
-			break;
 		case TT_CUBIC:
-			texEnum = GL_TEXTURE_CUBE_MAP_EXT;
+			texEnum = GL_TEXTURE_CUBE_MAP;
+			break;
+		case TT_DISABLED:
+			texEnum = GL_INVALID_ENUM;
 			break;
 		}
 
@@ -990,17 +901,10 @@ static filterName_t textureFilters[] = {
 		if ( glt->texnum == idImage::TEXTURE_NOT_LOADED ) {
 			continue;
 		}
-		glt->Bind();
-		if ( glt->filter == TF_DEFAULT ) {
-			qglTexParameterf(texEnum, GL_TEXTURE_MIN_FILTER, globalImages->textureMinFilter );
-			qglTexParameterf(texEnum, GL_TEXTURE_MAG_FILTER, globalImages->textureMaxFilter );
-		}
-		if ( glConfig.anisotropicAvailable ) {
-			qglTexParameterf(texEnum, GL_TEXTURE_MAX_ANISOTROPY_EXT, globalImages->textureAnisotropy );
-		}	
-		if ( glConfig.textureLODBiasAvailable ) {
-			qglTexParameterf(texEnum, GL_TEXTURE_LOD_BIAS_EXT, globalImages->textureLODBias );
-		}
+
+		//TODO(johl): do we need this bind? does some caller rely on the image being bound to 0 after calling this fucntion?
+		glt->Bind(0);
+		glt->SetImageFilterAndRepeat();
 	}
 }
 
@@ -1012,8 +916,9 @@ idImage::Reload
 void idImage::Reload( bool checkPrecompressed, bool force ) {
 	// always regenerate functional images
 	if ( generatorFunction ) {
-		common->DPrintf( "regenerating %s.\n", imgName.c_str() );
-		generatorFunction( this );
+		//FIXME(johl): re-generating some images fails currently (because those image are currently bound? as texture or render target?
+		//common->DPrintf( "regenerating %s.\n", imgName.c_str() );
+		//generatorFunction( this );
 		return;
 	}
 
@@ -1021,12 +926,11 @@ void idImage::Reload( bool checkPrecompressed, bool force ) {
 	if ( !force ) {
 		ID_TIME_T	current;
 
-		if ( cubeFiles != CF_2D ) {
-			R_LoadCubeImages( imgName, cubeFiles, NULL, NULL, &current );
-		} else {
-			// get the current values
-			R_LoadImageProgram( imgName, NULL, NULL, NULL, &current );
+		fhImageProgram program;
+		if (!program.LoadImageProgram( imgName, nullptr, &current )) {
+			return;
 		}
+
 		if ( current <= timestamp ) {
 			return;
 		}
@@ -1379,18 +1283,21 @@ void idImageManager::SetNormalPalette( void ) {
 	temptable[255*3+1] =
 	temptable[255*3+2] = 128;
 
+	//TODO(johl): remove this function completely?
+/*
 	if ( !glConfig.sharedTexturePaletteAvailable ) {
 		return;
 	}
 
-	qglColorTableEXT( GL_SHARED_TEXTURE_PALETTE_EXT,
+	glColorTableEXT( GL_SHARED_TEXTURE_PALETTE_EXT,
 					   GL_RGB,
 					   256,
 					   GL_RGB,
 					   GL_UNSIGNED_BYTE,
 					   temptable );
 
-	qglEnable( GL_SHARED_TEXTURE_PALETTE_EXT );
+	glEnable( GL_SHARED_TEXTURE_PALETTE_EXT );
+*/
 }
 
 /*
@@ -1479,7 +1386,7 @@ Loading of the image may be deferred for dynamic loading.
 ==============
 */
 idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filter, bool allowDownSize,
-						 textureRepeat_t repeat, textureDepth_t depth, cubeFiles_t cubeMap ) {
+						 textureRepeat_t repeat, textureDepth_t depth ) {
 	idStr name;
 	idImage	*image;
 	int hash;
@@ -1504,9 +1411,6 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 			// the built in's, like _white and _flat always match the other options
 			if ( name[0] == '_' ) {
 				return image;
-			}
-			if ( image->cubeFiles != cubeMap ) {
-				common->Error( "Image '%s' has been referenced with conflicting cube map states", _name );
 			}
 
 			if ( image->filter != filter || image->repeat != repeat ) {
@@ -1571,7 +1475,7 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 	image->repeat = repeat;
 	image->depth = depth;
 	image->type = TT_2D;
-	image->cubeFiles = cubeMap;
+	image->cubeFiles = CF_2D;
 	image->filter = filter;
 	
 	image->levelLoadReferenced = true;
@@ -1585,7 +1489,7 @@ idImage	*idImageManager::ImageFromFile( const char *_name, textureFilter_t filte
 		image->partialImage->repeat = repeat;
 		image->partialImage->depth = depth;
 		image->partialImage->type = TT_2D;
-		image->partialImage->cubeFiles = cubeMap;
+		image->partialImage->cubeFiles = CF_2D;
 		image->partialImage->filter = filter;
 
 		image->partialImage->levelLoadReferenced = true;
@@ -1659,13 +1563,19 @@ PurgeAllImages
 ===============
 */
 void idImageManager::PurgeAllImages() {
-	int		i;
-	idImage	*image;
 
-	for ( i = 0; i < images.Num() ; i++ ) {
-		image = images[i];
-		image->PurgeImage();
+	for ( int i = 0; i < images.Num() ; i++ ) {
+		images[i]->PurgeImage();
 	}
+
+	//FIXME(johl): reloading images breaks shadow mapping
+/*
+	shadowmapImage->PurgeImage();
+	shadowmapFramebuffer->Purge();
+
+	shadowmapAtlasImage->PurgeImage();
+	shadowmapAtlasFramebuffer->Purge();
+*/
 }
 
 /*
@@ -1915,20 +1825,38 @@ int idImageManager::SumOfUsedImages() {
 BindNull
 ===============
 */
-void idImageManager::BindNull() {
-	tmu_t			*tmu;
+void idImageManager::BindNull(int textureUnit) {
 
-	tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
-
-	RB_LogComment( "BindNull()\n" );
-	if ( tmu->textureType == TT_CUBIC ) {
-		qglDisable( GL_TEXTURE_CUBE_MAP_EXT );
-	} else if ( tmu->textureType == TT_3D ) {
-		qglDisable( GL_TEXTURE_3D );
-	} else if ( tmu->textureType == TT_2D ) {
-		qglDisable( GL_TEXTURE_2D );
+	if(textureUnit == -1) {
+		textureUnit = backEnd.glState.currenttmu;
 	}
-	tmu->textureType = TT_DISABLED;
+
+	tmu_t *tmu = &backEnd.glState.tmu[textureUnit];
+
+
+	if (tmu->currentTexture != 0) {
+		RB_LogComment( "BindNull()\n" );
+
+		if(glConfig.extDirectStateAccessAvailable) {
+			if (tmu->currentTextureType == TT_2D) {
+				glBindMultiTextureEXT(GL_TEXTURE0 +  textureUnit, GL_TEXTURE_2D, 0 );				
+			}
+			else if (tmu->currentTextureType == TT_CUBIC) {
+				glBindMultiTextureEXT(GL_TEXTURE0 +  textureUnit, GL_TEXTURE_CUBE_MAP, 0 );
+			}
+		} else {
+			GL_SelectTexture( textureUnit );
+
+			if (tmu->currentTextureType == TT_2D) {
+				glBindTexture( GL_TEXTURE_2D, 0 );
+			}
+			else if (tmu->currentTextureType == TT_CUBIC) {
+				glBindTexture( GL_TEXTURE_CUBE_MAP, 0 );
+			}
+		}
+
+		tmu->currentTexture = 0;
+	}
 }
 
 /*
@@ -1952,20 +1880,20 @@ void idImageManager::Init() {
 	// create built in images
 	defaultImage = ImageFromFunction( "_default", R_DefaultImage );
 	whiteImage = ImageFromFunction( "_white", R_WhiteImage );
-	blackImage = ImageFromFunction( "_black", R_BlackImage );
-	borderClampImage = ImageFromFunction( "_borderClamp", R_BorderClampImage );
+	blackImage = ImageFromFunction( "_black", R_BlackImage );	
 	flatNormalMap = ImageFromFunction( "_flat", R_FlatNormalImage );
-	ambientNormalMap = ImageFromFunction( "_ambient", R_AmbientNormalImage );
-	specularTableImage = ImageFromFunction( "_specularTable", R_SpecularTableImage );
-	specular2DTableImage = ImageFromFunction( "_specular2DTable", R_Specular2DTableImage );
-	rampImage = ImageFromFunction( "_ramp", R_RampImage );
-	alphaRampImage = ImageFromFunction( "_alphaRamp", R_RampImage );
 	alphaNotchImage = ImageFromFunction( "_alphaNotch", R_AlphaNotchImage );
 	fogImage = ImageFromFunction( "_fog", R_FogImage );
 	fogEnterImage = ImageFromFunction( "_fogEnter", R_FogEnterImage );
-	normalCubeMapImage = ImageFromFunction( "_normalCubeMap", makeNormalizeVectorCubeMap );
-	noFalloffImage = ImageFromFunction( "_noFalloff", R_CreateNoFalloffImage );
 	ImageFromFunction( "_quadratic", R_QuadraticImage );
+
+	if(!r_glCoreProfile.GetBool()) {
+		borderClampImage = ImageFromFunction( "_borderClamp", R_BorderClampImage ); //MegaTexture
+	}
+
+	rampImage = ImageFromFunction("_ramp", R_RampImage);
+	alphaRampImage = ImageFromFunction("_alphaRamp", R_RampImage);  
+	noFalloffImage = ImageFromFunction("_noFalloff", R_CreateNoFalloffImage);
 
 	// cinematicImage is used for cinematic drawing
 	// scratchImage is used for screen wipes/doublevision etc..
@@ -1973,12 +1901,19 @@ void idImageManager::Init() {
 	scratchImage = ImageFromFunction("_scratch", R_RGBA8Image );
 	scratchImage2 = ImageFromFunction("_scratch2", R_RGBA8Image );
 	accumImage = ImageFromFunction("_accum", R_RGBA8Image );
-	scratchCubeMapImage = ImageFromFunction("_scratchCubeMap", makeNormalizeVectorCubeMap );
 	currentRenderImage = ImageFromFunction("_currentRender", R_RGBA8Image );
+	currentDepthImage = ImageFromFunction("_currentDepth", R_Depth );
 
 	cmdSystem->AddCommand( "reloadImages", R_ReloadImages_f, CMD_FL_RENDERER, "reloads images" );
 	cmdSystem->AddCommand( "listImages", R_ListImages_f, CMD_FL_RENDERER, "lists images" );
 	cmdSystem->AddCommand( "combineCubeImages", R_CombineCubeImages_f, CMD_FL_RENDERER, "combines six images for roq compression" );
+
+	jitterImage = ImageFromFunction("_jitter", R_JitterImage );
+
+	shadowmapImage = ImageFromFunction( "_shadowmapImage", R_Depth );
+
+	renderColorImage = ImageFromFunction( "_renderColorImage", R_RGBA8Image );
+	renderDepthImage = ImageFromFunction( "_renderDepthImage", R_Depth );
 
 	// should forceLoadImages be here?
 }

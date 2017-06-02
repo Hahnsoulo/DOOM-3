@@ -181,6 +181,22 @@ int Sys_Milliseconds( void ) {
 	return curtime;
 }
 
+uint64 Sys_Microseconds( void ) {
+	int curtime;
+	struct timeval tp;
+
+	gettimeofday(&tp, NULL);
+
+	if (!sys_timeBase) {
+		sys_timeBase = tp.tv_sec;
+		return tp.tv_usec;
+	}
+
+	curtime = uint64(tp.tv_sec - sys_timeBase) * 1000000 + tp.tv_usec;
+
+	return curtime;
+}
+
 /*
 ================
 Sys_Mkdir
@@ -251,6 +267,38 @@ int Sys_ListFiles( const char *directory, const char *extension, idStrList &list
 	}
 	
 	return list.Num();
+}
+
+/*
+==========
+Sys_IsFile
+==========
+*/
+bool Sys_IsFile(const char* path) {
+    assert(path);
+
+    struct stat st;
+    if ( stat( path, &st ) != -1 && S_ISREG( st.st_mode ) ) {
+        return true;
+    }
+
+    return false;
+}
+
+/*
+===============
+Sys_IsDirectory
+===============
+*/
+bool Sys_IsDirectory(const char* path) {
+    assert(path);
+
+    struct stat st;
+    if ( stat( path, &st ) != -1 && S_ISDIR( st.st_mode ) ) {
+        return true;
+    }
+
+    return false;
 }
 
 /*
@@ -331,10 +379,10 @@ void Sys_ClearEvents( void ) {
 
 /*
 ================
-Posix_Cwd
+Sys_Cwd
 ================
 */
-const char *Posix_Cwd( void ) {
+const char *Sys_Cwd( void ) {
 	static char cwd[MAX_OSPATH];
 
 	getcwd( cwd, sizeof( cwd ) - 1 );

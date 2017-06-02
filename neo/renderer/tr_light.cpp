@@ -58,73 +58,14 @@ bool R_CreateAmbientCache( srfTriangles_t *tri, bool needsLighting ) {
 		R_DeriveTangents( tri );
 	}
 
-	vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), &tri->ambientCache );
-	if ( !tri->ambientCache ) {
+	//FIXME(johl): sometimes numVerts is zero... why?
+	assert( tri->numVerts > 0 );
+	if (tri->numVerts <= 0) {
 		return false;
 	}
-	return true;
-}
 
-/*
-==================
-R_CreateLightingCache
-
-Returns false if the cache couldn't be allocated, in which case the surface should be skipped.
-==================
-*/
-bool R_CreateLightingCache( const idRenderEntityLocal *ent, const idRenderLightLocal *light, srfTriangles_t *tri ) {
-	idVec3		localLightOrigin;
-
-	// fogs and blends don't need light vectors
-	if ( light->lightShader->IsFogLight() || light->lightShader->IsBlendLight() ) {
-		return true;
-	}
-
-	// not needed if we have vertex programs
-	if ( tr.backEndRendererHasVertexPrograms ) {
-		return true;
-	}
-
-	R_GlobalPointToLocal( ent->modelMatrix, light->globalLightOrigin, localLightOrigin );
-
-	int	size = tri->ambientSurface->numVerts * sizeof( lightingCache_t );
-	lightingCache_t *cache = (lightingCache_t *)_alloca16( size );
-
-#if 1
-
-	SIMDProcessor->CreateTextureSpaceLightVectors( &cache[0].localLightVector, localLightOrigin,
-												tri->ambientSurface->verts, tri->ambientSurface->numVerts, tri->indexes, tri->numIndexes );
-
-#else
-
-	bool *used = (bool *)_alloca16( tri->ambientSurface->numVerts * sizeof( used[0] ) );
-	memset( used, 0, tri->ambientSurface->numVerts * sizeof( used[0] ) );
-
-	// because the interaction may be a very small subset of the full surface,
-	// it makes sense to only deal with the verts used
-	for ( int j = 0; j < tri->numIndexes; j++ ) {
-		int i = tri->indexes[j];
-		if ( used[i] ) {
-			continue;
-		}
-		used[i] = true;
-
-		idVec3 lightDir;
-		const idDrawVert *v;
-
-		v = &tri->ambientSurface->verts[i];
-
-		lightDir = localLightOrigin - v->xyz;
-
-		cache[i].localLightVector[0] = lightDir * v->tangents[0];
-		cache[i].localLightVector[1] = lightDir * v->tangents[1];
-		cache[i].localLightVector[2] = lightDir * v->normal;
-	}
-
-#endif
-
-	vertexCache.Alloc( cache, size, &tri->lightingCache );
-	if ( !tri->lightingCache ) {
+	tri->ambientCache = vertexCache.Alloc( tri->verts, tri->numVerts * sizeof( tri->verts[0] ), false );
+	if ( !tri->ambientCache ) {	
 		return false;
 	}
 	return true;
@@ -142,7 +83,7 @@ void R_CreatePrivateShadowCache( srfTriangles_t *tri ) {
 		return;
 	}
 
-	vertexCache.Alloc( tri->shadowVertexes, tri->numVerts * sizeof( *tri->shadowVertexes ), &tri->shadowCache );
+	tri->shadowCache = vertexCache.Alloc( tri->shadowVertexes, tri->numVerts * sizeof( *tri->shadowVertexes ), false );
 }
 
 /*
@@ -182,7 +123,7 @@ void R_CreateVertexProgramShadowCache( srfTriangles_t *tri ) {
 
 #endif
 
-	vertexCache.Alloc( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), &tri->shadowCache );
+	tri->shadowCache = vertexCache.Alloc( temp, tri->numVerts * 2 * sizeof( shadowCache_t ), false );
 }
 
 /*
@@ -447,6 +388,78 @@ static bool R_PointInFrustum( idVec3 &p, idPlane *planes, int numPlanes ) {
 	return true;
 }
 
+static idCVar r_smLodBias("r_smLodBias", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "");
+static idCVar r_smUseScreenSizeLod( "r_smUseScreenSizeLod", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE, "" );
+static idCVar r_smScreenSizeLod1( "r_smScreenSizeLod1", "0.9", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE, "" );
+static idCVar r_smScreenSizeLod2( "r_smScreenSizeLod2", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE, "" );
+
+static int R_SelectShadowMapLod( const viewLight_t* vlight, const viewDef_t* view ) {
+
+	int lod = Max(r_smLodBias.GetInteger(), vlight->lightDef->parms.smLodBias);
+
+	if(r_smUseScreenSizeLod.GetBool()) {
+		idVec3 corners[8];
+		vlight->lightDef->frustumTris->bounds.ToPoints(corners);
+
+		idVec2 minimum = idVec2(32000, 32000);
+		idVec2 maximum = idVec2(-32000, -32000);
+
+		for(int i=0; i<8; ++i) {
+			idVec3 tmp;
+			R_GlobalToNormalizedDeviceCoordinates(corners[i], tmp);
+
+			minimum.x = Min(minimum.x, tmp.x);
+			minimum.y = Min(minimum.y, tmp.y);
+
+			maximum.x = Max( maximum.x, tmp.x );
+			maximum.y = Max( maximum.y, tmp.y );
+		};
+
+		idVec2 screensize( (maximum.x - minimum.x) * 0.5 , (maximum.y - minimum.y) * 0.5 );
+
+		float area = screensize.x * screensize.y;
+
+		float maxRadius = Max(Max(vlight->lightDef->parms.lightRadius.x, vlight->lightDef->parms.lightRadius.y), vlight->lightDef->parms.lightRadius.z);
+
+		if(area < r_smScreenSizeLod1.GetFloat()) {
+			lod++;
+		}
+
+		if (area < r_smScreenSizeLod2.GetFloat()) {
+			lod++;
+		}		
+	}
+	else {
+		const idRenderLightLocal* light = vlight->lightDef;
+
+		const float thresholds[] = { 750, 400, 150, 75, 0 };
+		const int numThresholds = sizeof(thresholds) / sizeof(thresholds[0]);
+	
+		float size = light->GetMaximumCenterToEdgeDistance();
+
+		for (int i = 0; i<numThresholds; ++i) {
+			if (thresholds[i] > size) {
+				break;
+			}
+			else {
+				lod++;
+			}
+		}
+
+		const float distance = (light->parms.origin - view->renderView.vieworg).Length();
+
+		if(distance > 400) {
+			lod++;
+		}
+
+		if(distance > 800) {
+			lod++;
+		}
+	}
+
+	return  Min(2, Max(0, lod));	
+}
+
 /*
 =============
 R_SetLightDefViewLight
@@ -466,6 +479,8 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 	// add to the view light chain
 	vLight = (viewLight_t *)R_ClearedFrameAlloc( sizeof( *vLight ) );
 	vLight->lightDef = light;
+
+	vLight->shadowMapLod = R_SelectShadowMapLod(vLight, tr.viewDef);
 
 	// the scissorRect will be expanded as the light bounds is accepted into visible portal chains
 	vLight->scissorRect.Clear();
@@ -499,6 +514,11 @@ viewLight_t *R_SetLightDefViewLight( idRenderLightLocal *light ) {
 	vLight->falloffImage = light->falloffImage;
 	vLight->lightShader = light->lightShader;
 	vLight->shaderRegisters = NULL;		// allocated and evaluated in R_AddLightSurfaces
+
+	for(int i=0; i<6; ++i) {
+		vLight->farClip[i] = light->shadowMapFrustums[i].farPlaneDistance;
+		vLight->nearClip[i] = light->shadowMapFrustums[i].nearPlaneDistance;
+	}
 
 	// link the view light
 	vLight->next = tr.viewDef->viewLights;
@@ -688,15 +708,6 @@ void R_LinkLightSurf( const drawSurf_t **link, const srfTriangles_t *tri, const 
 			float *regs = (float *)R_FrameAlloc( shader->GetNumRegisters() * sizeof( float ) );
 			drawSurf->shaderRegisters = regs;
 			shader->EvaluateRegisters( regs, space->entityDef->parms.shaderParms, tr.viewDef, space->entityDef->parms.referenceSound );
-		}
-
-		// calculate the specular coordinates if we aren't using vertex programs
-		if ( !tr.backEndRendererHasVertexPrograms && !r_skipSpecular.GetBool() && tr.backEndRenderer != BE_ARB ) {
-			R_SpecularTexGen( drawSurf, light->globalLightOrigin, tr.viewDef->renderView.vieworg );
-			// if we failed to allocate space for the specular calculations, drop the surface
-			if ( !drawSurf->dynamicTexCoords ) {
-				return;
-			}
 		}
 	}
 
@@ -1009,7 +1020,7 @@ void R_AddLightSurfaces( void ) {
 		}
 
 		// add the prelight shadows for the static world geometry
-		if ( light->parms.prelightModel && r_useOptimizedShadows.GetBool() ) {
+		if ( light->ShadowMode() == shadowMode_t::StencilShadow && light->parms.prelightModel && r_useOptimizedShadows.GetBool() ) {
 
 			if ( !light->parms.prelightModel->NumSurfaces() ) {
 				common->Error( "no surfs in prelight model '%s'", light->parms.prelightModel->Name() );
@@ -1039,8 +1050,9 @@ void R_AddLightSurfaces( void ) {
 			vertexCache.Touch( tri->shadowCache );
 
 			if ( !tri->indexCache && r_useIndexBuffers.GetBool() ) {
-				vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), &tri->indexCache, true );
+				tri->indexCache = vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), true );				
 			}
+
 			if ( tri->indexCache ) {
 				vertexCache.Touch( tri->indexCache );
 			}
@@ -1411,7 +1423,7 @@ static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
 			vertexCache.Touch( tri->ambientCache );
 
 			if ( r_useIndexBuffers.GetBool() && !tri->indexCache ) {
-				vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), &tri->indexCache, true );
+        tri->indexCache = vertexCache.Alloc( tri->indexes, tri->numIndexes * sizeof( tri->indexes[0] ), true );
 			}
 			if ( tri->indexCache ) {
 				vertexCache.Touch( tri->indexCache );
@@ -1457,18 +1469,14 @@ shadows are generated, since dynamic models will typically be lit by
 two or more lights.
 ===================
 */
-void R_AddModelSurfaces( void ) {
-	viewEntity_t		*vEntity;
-	idInteraction		*inter, *next;
-	idRenderModel		*model;
-
+void R_AddModelSurfaces( void ) {	
 	// clear the ambient surface list
 	tr.viewDef->numDrawSurfs = 0;
 	tr.viewDef->maxDrawSurfs = 0;	// will be set to INITIAL_DRAWSURFS on R_AddDrawSurf
 
 	// go through each entity that is either visible to the view, or to
 	// any light that intersects the view (for shadows)
-	for ( vEntity = tr.viewDef->viewEntitys; vEntity; vEntity = vEntity->next ) {
+	for ( viewEntity_t* vEntity = tr.viewDef->viewEntitys; vEntity; vEntity = vEntity->next ) {
 
 		if ( r_useEntityScissors.GetBool() ) {
 			// calculate the screen area covered by the entity
@@ -1510,7 +1518,7 @@ void R_AddModelSurfaces( void ) {
 
 		// add the ambient surface if it has a visible rectangle
 		if ( !vEntity->scissorRect.IsEmpty() ) {
-			model = R_EntityDefDynamicModel( vEntity->entityDef );
+			idRenderModel* model = R_EntityDefDynamicModel( vEntity->entityDef );
 			if ( model == NULL || model->NumSurfaces() <= 0 ) {
 				if ( vEntity->entityDef->parms.timeGroup ) {
 					tr.viewDef->floatTime = oldFloatTime;
@@ -1530,7 +1538,8 @@ void R_AddModelSurfaces( void ) {
 		//
 		if ( tr.viewDef->isXraySubview ) {
 			if ( vEntity->entityDef->parms.xrayIndex == 2 ) {
-				for ( inter = vEntity->entityDef->firstInteraction; inter != NULL && !inter->IsEmpty(); inter = next ) {
+        idInteraction* next;
+				for ( idInteraction* inter = vEntity->entityDef->firstInteraction; inter != NULL && !inter->IsEmpty(); inter = next ) {
 					next = inter->entityNext;
 					if ( inter->lightDef->viewCount != tr.viewCount ) {
 						continue;
@@ -1541,7 +1550,8 @@ void R_AddModelSurfaces( void ) {
 		} else {
 			// all empty interactions are at the end of the list so once the
 			// first is encountered all the remaining interactions are empty
-			for ( inter = vEntity->entityDef->firstInteraction; inter != NULL && !inter->IsEmpty(); inter = next ) {
+			idInteraction* next;
+			for ( idInteraction* inter = vEntity->entityDef->firstInteraction; inter != NULL && !inter->IsEmpty(); inter = next ) {
 				next = inter->entityNext;
 
 				// skip any lights that aren't currently visible

@@ -152,7 +152,6 @@ typedef enum {
 	TG_SKYBOX_CUBE,
 	TG_WOBBLESKY_CUBE,
 	TG_SCREEN,			// screen aligned, for mirrorRenders and screen space temporaries
-	TG_SCREEN2,
 	TG_GLASSWARP
 } texgen_t;
 
@@ -185,20 +184,32 @@ typedef enum {
 	SVC_INVERSE_MODULATE
 } stageVertexColor_t;
 
+typedef enum {
+  DBM_UNDEFINED,
+  DBM_OFF,
+  DBM_AUTO,             //try to choose one of the following modes based on current blend mode (if that fails, mode defaults to Off)
+  DBM_COLORALPHA_ZERO,  //blend color and alpha to zero (fade-out for 'blend add')
+  DBM_COLORALPHA_ONE,   //blend color and alpha to one  (fade-out for 'blend filter|modulate')
+  DBM_ALPHA_ONE,        //?
+  DBM_ALPHA_ZERO        //blend alpha to zero  (fade-out for 'blend blend')
+} depthBlendMode_t;
+
 static const int	MAX_FRAGMENT_IMAGES = 8;
 static const int	MAX_VERTEX_PARMS = 4;
 
+struct fhRenderProgram;
+
 typedef struct {
-	int					vertexProgram;
-	int					numVertexParms;
-	int					vertexParms[MAX_VERTEX_PARMS][4];	// evaluated register indexes
+  const fhRenderProgram*  program;
+  int                      numShaderParms;
+  int                      shaderParms[MAX_VERTEX_PARMS][4];	// evaluated register indexes
 
-	int					fragmentProgram;
-	int					numFragmentProgramImages;
-	idImage *			fragmentProgramImages[MAX_FRAGMENT_IMAGES];
+  int                      numShaderMaps;
+  idImage *                shaderMap[MAX_FRAGMENT_IMAGES];
 
-	idMegaTexture		*megaTexture;		// handles all the binding and parameter setting 
-} newShaderStage_t;
+  char                     vertexShaderName[64];
+  char                     fragmentShaderName[64];  
+} glslShaderStage_t;
 
 typedef struct {
 	int					conditionRegister;	// if registers[conditionRegister] == 0, skip stage
@@ -212,8 +223,10 @@ typedef struct {
 	bool				ignoreAlphaTest;	// this stage should act as translucent, even
 											// if the surface is alpha tested
 	float				privatePolygonOffset;	// a per-stage polygon offset
-
-	newShaderStage_t	*newStage;			// vertex / fragment program based stage
+	depthBlendMode_t	depthBlendMode;
+	float				depthBlendRange;
+	
+	glslShaderStage_t*	glslStage;
 } shaderStage_t;
 
 typedef enum {
@@ -390,6 +403,10 @@ public:
 						// returns true if the material will generate shadows, not making a
 						// distinction between global and no-self shadows
 	bool				SurfaceCastsShadow( void ) const { return TestMaterialFlag( MF_FORCESHADOWS ) || !TestMaterialFlag( MF_NOSHADOWS ); }
+
+						// returns true if the material will generate soft shadows, not making a
+						// distinction between global and no-self shadows.
+	bool                SurfaceCastsSoftShadow( void ) const;
 
 						// returns true if the material will generate interactions with fog/blend lights
 						// All non-translucent surfaces receive fog unless they are explicitly noFog
@@ -594,8 +611,9 @@ private:
 	bool				MatchToken( idLexer &src, const char *match );
 	void				ParseSort( idLexer &src );
 	void				ParseBlend( idLexer &src, shaderStage_t *stage );
-	void				ParseVertexParm( idLexer &src, newShaderStage_t *newStage );
-	void				ParseFragmentMap( idLexer &src, newShaderStage_t *newStage );
+	void				ParseDepthBlendMode( idLexer &src, shaderStage_t *stage );
+	void				ParseShaderParm( idLexer &src, glslShaderStage_t *glslStage );
+	void				ParseShaderMap( idLexer &src, glslShaderStage_t *glslStage );
 	void				ParseStage( idLexer &src, const textureRepeat_t trpDefault = TR_REPEAT );
 	void				ParseDeform( idLexer &src );
 	void				ParseDecalInfo( idLexer &src );

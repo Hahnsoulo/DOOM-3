@@ -2027,6 +2027,10 @@ void idAI::Event_RestoreMove( void ) {
 	case MOVE_WANDER :
 		WanderAround();
 		break;
+
+	case NUM_MOVE_COMMANDS :
+		//ignore
+		break;
 	}
 
 	if ( GetMovePos( goalPos ) ) {
@@ -2335,7 +2339,7 @@ void idAI::Event_ThrowMoveable( void ) {
 	}
 	if ( moveable ) {
 		moveable->Unbind();
-		moveable->PostEventMS( &EV_SetOwner, 200, NULL );
+		moveable->PostEventMS( &EV_SetOwner, 200, 0 );
 	}
 }
 
@@ -2356,7 +2360,7 @@ void idAI::Event_ThrowAF( void ) {
 	}
 	if ( af ) {
 		af->Unbind();
-		af->PostEventMS( &EV_SetOwner, 200, NULL );
+		af->PostEventMS( &EV_SetOwner, 200, 0 );
 	}
 }
 

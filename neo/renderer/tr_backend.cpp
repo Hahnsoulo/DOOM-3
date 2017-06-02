@@ -29,7 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
-
+#include "ImmediateMode.h"
+#include "RenderProgram.h"
+#include "Framebuffer.h"
 
 frameData_t		*frameData;
 backEndState_t	backEnd;
@@ -43,63 +45,33 @@ This should initialize all GL state that any part of the entire program
 may touch, including the editor.
 ======================
 */
-void RB_SetDefaultGLState( void ) {
-	int		i;
+void RB_SetDefaultGLState(void) {
+	RB_LogComment("--- R_SetDefaultGLState ---\n");
 
-	RB_LogComment( "--- R_SetDefaultGLState ---\n" );
-
-	qglClearDepth( 1.0f );
-	qglColor4f (1,1,1,1);
-
-	// the vertex array is always enabled
-	qglEnableClientState( GL_VERTEX_ARRAY );
-	qglEnableClientState( GL_TEXTURE_COORD_ARRAY );
-	qglDisableClientState( GL_COLOR_ARRAY );
+	glClearDepth(1.0f);
 
 	//
 	// make sure our GL state vector is set correctly
 	//
-	memset( &backEnd.glState, 0, sizeof( backEnd.glState ) );
+	memset(&backEnd.glState, 0, sizeof(backEnd.glState));
 	backEnd.glState.forceGlState = true;
 
-	qglColorMask( 1, 1, 1, 1 );
+	glColorMask(1, 1, 1, 1);
 
-	qglEnable( GL_DEPTH_TEST );
-	qglEnable( GL_BLEND );
-	qglEnable( GL_SCISSOR_TEST );
-	qglEnable( GL_CULL_FACE );
-	qglDisable( GL_LIGHTING );
-	qglDisable( GL_LINE_STIPPLE );
-	qglDisable( GL_STENCIL_TEST );
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+	glEnable(GL_SCISSOR_TEST);
+	glEnable(GL_CULL_FACE);
+	glDisable(GL_STENCIL_TEST);
 
-	qglPolygonMode (GL_FRONT_AND_BACK, GL_FILL);
-	qglDepthMask( GL_TRUE );
-	qglDepthFunc( GL_ALWAYS );
- 
-	qglCullFace( GL_FRONT_AND_BACK );
-	qglShadeModel( GL_SMOOTH );
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_ALWAYS);
 
-	if ( r_useScissor.GetBool() ) {
-		qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
-	}
+	glCullFace(GL_FRONT_AND_BACK);
 
-	for ( i = glConfig.maxTextureUnits - 1 ; i >= 0 ; i-- ) {
-		GL_SelectTexture( i );
-
-		// object linear texgen is our default
-		qglTexGenf( GL_S, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR );
-		qglTexGenf( GL_T, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR );
-		qglTexGenf( GL_R, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR );
-		qglTexGenf( GL_Q, GL_TEXTURE_GEN_MODE, GL_OBJECT_LINEAR );
-
-		GL_TexEnv( GL_MODULATE );
-		qglDisable( GL_TEXTURE_2D );
-		if ( glConfig.texture3DAvailable ) {
-			qglDisable( GL_TEXTURE_3D );
-		}
-		if ( glConfig.cubeMapAvailable ) {
-			qglDisable( GL_TEXTURE_CUBE_MAP_EXT );
-		}
+	if (r_useScissor.GetBool()) {
+		glScissor(0, 0, glConfig.vidWidth, glConfig.vidHeight);
 	}
 }
 
@@ -110,16 +82,16 @@ RB_LogComment
 ====================
 */
 void RB_LogComment( const char *comment, ... ) {
-   va_list marker;
+  va_list marker;
 
-	if ( !tr.logFile ) {
-		return;
-	}
+  if ( !tr.logFile ) {
+    return;
+  }
 
-	fprintf( tr.logFile, "// " );
-	va_start( marker, comment );
-	vfprintf( tr.logFile, comment, marker );
-	va_end( marker );
+  fprintf( tr.logFile, "// " );
+  va_start( marker, comment );
+  vfprintf( tr.logFile, comment, marker );
+  va_end( marker );
 }
 
 
@@ -137,14 +109,18 @@ void GL_SelectTexture( int unit ) {
 		return;
 	}
 
-	if ( unit < 0 || unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits ) {
+	if ( unit < 0 || (unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits) ) {
 		common->Warning( "GL_SelectTexture: unit = %i", unit );
 		return;
 	}
 
-	qglActiveTextureARB( GL_TEXTURE0_ARB + unit );
-	qglClientActiveTextureARB( GL_TEXTURE0_ARB + unit );
-	RB_LogComment( "glActiveTextureARB( %i );\nglClientActiveTextureARB( %i );\n", unit, unit );
+	if(glConfig.extDirectStateAccessAvailable) {
+		RB_LogComment( "ignore GL_SelectTexture( %i );\n", unit );
+	}
+	else {
+		glActiveTexture( GL_TEXTURE0 + unit );
+		RB_LogComment( "glActiveTexture( %i );\n", unit );
+	}
 
 	backEnd.glState.currenttmu = unit;
 }
@@ -164,69 +140,28 @@ void GL_Cull( int cullType ) {
 	}
 
 	if ( cullType == CT_TWO_SIDED ) {
-		qglDisable( GL_CULL_FACE );
+		glDisable( GL_CULL_FACE );
 	} else  {
 		if ( backEnd.glState.faceCulling == CT_TWO_SIDED ) {
-			qglEnable( GL_CULL_FACE );
+			glEnable( GL_CULL_FACE );
 		}
 
 		if ( cullType == CT_BACK_SIDED ) {
 			if ( backEnd.viewDef->isMirror ) {
-				qglCullFace( GL_FRONT );
+				glCullFace( GL_FRONT );
 			} else {
-				qglCullFace( GL_BACK );
+				glCullFace( GL_BACK );
 			}
 		} else {
 			if ( backEnd.viewDef->isMirror ) {
-				qglCullFace( GL_BACK );
+				glCullFace( GL_BACK );
 			} else {
-				qglCullFace( GL_FRONT );
+				glCullFace( GL_FRONT );
 			}
 		}
 	}
 
 	backEnd.glState.faceCulling = cullType;
-}
-
-/*
-====================
-GL_TexEnv
-====================
-*/
-void GL_TexEnv( int env ) {
-	tmu_t	*tmu;
-
-	tmu = &backEnd.glState.tmu[backEnd.glState.currenttmu];
-	if ( env == tmu->texEnv ) {
-		return;
-	}
-
-	tmu->texEnv = env;
-
-	switch ( env ) {
-	case GL_COMBINE_EXT:
-	case GL_MODULATE:
-	case GL_REPLACE:
-	case GL_DECAL:
-	case GL_ADD:
-		qglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, env );
-		break;
-	default:
-		common->Error( "GL_TexEnv: invalid env '%d' passed\n", env );
-		break;
-	}
-}
-
-/*
-=================
-GL_ClearStateDelta
-
-Clears the state delta bits, so the next GL_State
-will set every item
-=================
-*/
-void GL_ClearStateDelta( void ) {
-	backEnd.glState.forceGlState = true;
 }
 
 /*
@@ -256,11 +191,11 @@ void GL_State( int stateBits ) {
 	//
 	if ( diff & ( GLS_DEPTHFUNC_EQUAL | GLS_DEPTHFUNC_LESS | GLS_DEPTHFUNC_ALWAYS ) ) {
 		if ( stateBits & GLS_DEPTHFUNC_EQUAL ) {
-			qglDepthFunc( GL_EQUAL );
+			glDepthFunc( GL_EQUAL );
 		} else if ( stateBits & GLS_DEPTHFUNC_ALWAYS ) {
-			qglDepthFunc( GL_ALWAYS );
+			glDepthFunc( GL_ALWAYS );
 		} else {
-			qglDepthFunc( GL_LEQUAL );
+			glDepthFunc( GL_LEQUAL );
 		}
 	}
 
@@ -336,7 +271,7 @@ void GL_State( int stateBits ) {
 			break;
 		}
 
-		qglBlendFunc( srcFactor, dstFactor );
+		glBlendFunc( srcFactor, dstFactor );
 	}
 
 	//
@@ -344,9 +279,9 @@ void GL_State( int stateBits ) {
 	//
 	if ( diff & GLS_DEPTHMASK ) {
 		if ( stateBits & GLS_DEPTHMASK ) {
-			qglDepthMask( GL_FALSE );
+			glDepthMask( GL_FALSE );
 		} else {
-			qglDepthMask( GL_TRUE );
+			glDepthMask( GL_TRUE );
 		}
 	}
 
@@ -359,7 +294,7 @@ void GL_State( int stateBits ) {
 		g = ( stateBits & GLS_GREENMASK ) ? 0 : 1;
 		b = ( stateBits & GLS_BLUEMASK ) ? 0 : 1;
 		a = ( stateBits & GLS_ALPHAMASK ) ? 0 : 1;
-		qglColorMask( r, g, b, a );
+		glColorMask( r, g, b, a );
 	}
 
 	//
@@ -367,43 +302,281 @@ void GL_State( int stateBits ) {
 	//
 	if ( diff & GLS_POLYMODE_LINE ) {
 		if ( stateBits & GLS_POLYMODE_LINE ) {
-			qglPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
 		} else {
-			qglPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
-		}
-	}
-
-	//
-	// alpha test
-	//
-	if ( diff & GLS_ATEST_BITS ) {
-		switch ( stateBits & GLS_ATEST_BITS ) {
-		case 0:
-			qglDisable( GL_ALPHA_TEST );
-			break;
-		case GLS_ATEST_EQ_255:
-			qglEnable( GL_ALPHA_TEST );
-			qglAlphaFunc( GL_EQUAL, 1 );
-			break;
-		case GLS_ATEST_LT_128:
-			qglEnable( GL_ALPHA_TEST );
-			qglAlphaFunc( GL_LESS, 0.5 );
-			break;
-		case GLS_ATEST_GE_128:
-			qglEnable( GL_ALPHA_TEST );
-			qglAlphaFunc( GL_GEQUAL, 0.5 );
-			break;
-		default:
-			assert( 0 );
-			break;
+			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 		}
 	}
 
 	backEnd.glState.glStateBits = stateBits;
 }
 
+bool  GL_UseProgram( const fhRenderProgram* program ) {
+  if(program) {
+	  return program->Bind();
+  } 
+
+  fhRenderProgram::Unbind();
+  return false;  
+}
 
 
+static const unsigned vertexLayoutAttributes[] = {
+	//None:
+	0,
+	//Shadow:
+	(1 << fhRenderProgram::vertex_attrib_position_shadow),
+	//ShadowSilhouette:
+	(1 << fhRenderProgram::vertex_attrib_position),
+	//Simple
+	(1 << fhRenderProgram::vertex_attrib_position)
+	| (1 << fhRenderProgram::vertex_attrib_texcoord)
+	| (1 << fhRenderProgram::vertex_attrib_color),
+	//Draw
+	(1 << fhRenderProgram::vertex_attrib_position)
+	| (1 << fhRenderProgram::vertex_attrib_texcoord)
+	| (1 << fhRenderProgram::vertex_attrib_normal)
+	| (1 << fhRenderProgram::vertex_attrib_color)
+	| (1 << fhRenderProgram::vertex_attrib_binormal)
+	| (1 << fhRenderProgram::vertex_attrib_tangent),
+	//DrawPosOnly
+	(1 << fhRenderProgram::vertex_attrib_position),
+	//DrawPosTexOnly
+	(1 << fhRenderProgram::vertex_attrib_position)
+	| (1 << fhRenderProgram::vertex_attrib_texcoord),
+	//DrawPosColorOnly
+	(1 << fhRenderProgram::vertex_attrib_position)
+	| (1 << fhRenderProgram::vertex_attrib_color),
+	//DrawPosColorTexOnly
+	(1 << fhRenderProgram::vertex_attrib_position)
+	| (1 << fhRenderProgram::vertex_attrib_texcoord)
+	| (1 << fhRenderProgram::vertex_attrib_color)
+};
+static_assert(sizeof(vertexLayoutAttributes)/sizeof(vertexLayoutAttributes[0]) == (size_t)fhVertexLayout::COUNT, "");
+
+static fhVertexLayout currentVertexLayout = fhVertexLayout::None;
+
+void GL_SetVertexLayout( fhVertexLayout layout ) {
+	if(currentVertexLayout == layout || layout == fhVertexLayout::None) {
+		return;
+	}
+
+	const unsigned current = vertexLayoutAttributes[(int)currentVertexLayout];
+	const unsigned target = vertexLayoutAttributes[(int)layout];
+
+	for (unsigned i = 0; i < 7 ; ++i) {
+		const unsigned bit = (1 << i);
+		const bool isEnabled = (current & bit) != 0;
+		const bool shouldBeEnabled = (target & bit) != 0;
+
+		if (shouldBeEnabled && !isEnabled) {
+			glEnableVertexAttribArray(i);			
+		}
+		else if (!shouldBeEnabled && isEnabled) {
+			glDisableVertexAttribArray(i);			
+		}
+	}
+
+	currentVertexLayout = layout;
+}
+
+template<typename T>
+static const void* attributeOffset( T offset, const void* attributeOffset )
+{
+	return reinterpret_cast<const void*>((std::ptrdiff_t)offset + (std::ptrdiff_t)attributeOffset);
+}
+
+template<typename T>
+static const void* attributeOffset( T offset, int attributeOffset )
+{
+	return reinterpret_cast<const void*>((std::ptrdiff_t)offset + (std::ptrdiff_t)attributeOffset);
+}
+
+
+
+void GL_SetupVertexAttributes( fhVertexLayout layout, int offset ) {
+	GL_SetVertexLayout( layout );
+
+	switch(currentVertexLayout) {
+	case fhVertexLayout::None:
+		break;
+	case fhVertexLayout::Shadow:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position_shadow, 4, GL_FLOAT, false, sizeof(shadowCache_t), attributeOffset(offset, 0) );
+		break;
+	case fhVertexLayout::ShadowSilhouette:
+		glVertexAttribPointer(fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(shadowCache_t), attributeOffset(offset, 0));
+		break;
+	case fhVertexLayout::Simple:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(fhSimpleVert), attributeOffset( offset, fhSimpleVert::xyzOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_texcoord, 2, GL_FLOAT, false, sizeof(fhSimpleVert), attributeOffset( offset, fhSimpleVert::texcoordOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_color, 4, GL_UNSIGNED_BYTE, false, sizeof(fhSimpleVert), attributeOffset( offset, fhSimpleVert::colorOffset ) );
+		break;
+	case fhVertexLayout::DrawPosOnly:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::xyzOffset) );
+		break;
+	case fhVertexLayout::DrawPosColorOnly:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::xyzOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_color, 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::colorOffset ) );
+		break;
+	case fhVertexLayout::DrawPosColorTexOnly:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::xyzOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_color, 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::colorOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_texcoord, 2, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::texcoordOffset ) );
+		break;
+	case fhVertexLayout::DrawPosTexOnly:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::xyzOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_texcoord, 2, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::texcoordOffset ) );
+		break;
+	case fhVertexLayout::Draw:
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_position, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::xyzOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_texcoord, 2, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::texcoordOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_normal, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::normalOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_color, 4, GL_UNSIGNED_BYTE, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::colorOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_binormal, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::binormalOffset ) );
+		glVertexAttribPointer( fhRenderProgram::vertex_attrib_tangent, 3, GL_FLOAT, false, sizeof(idDrawVert), attributeOffset( offset, idDrawVert::tangentOffset ) );
+		break;
+	case fhVertexLayout::COUNT:
+	default:
+		assert( false && "invalid vertex layout" );
+		break;
+	}
+}
+
+joGLMatrixStack::joGLMatrixStack(int mode) : matrixmode(mode), size(0) {
+  LoadIdentity();
+}
+
+void joGLMatrixStack::Load(const float* m) { 
+  memcpy(Data(size), m, sizeof(Matrix));
+}
+
+void joGLMatrixStack::LoadIdentity() {
+  static const float identity [16] = 
+  { 1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1 };
+  
+  Load(&identity[0]);  
+}
+
+void joGLMatrixStack::Push() {
+  assert(size + 1 < max_stack_size);
+
+  memcpy(&stack[size+1], &stack[size], sizeof(stack[0]));
+  size++;
+}
+
+void joGLMatrixStack::Pop() {
+  if(size > 0) {
+    size--;
+  }
+}
+
+void joGLMatrixStack::Ortho(float left, float right, float bottom, float top, float nearClip, float farClip) {
+  const float a = 2.0f/(right - left);
+  const float b = 2.0f/(top - bottom);
+  const float c = -2.0f/(farClip - nearClip);
+  const float d = -((right + left)/(right - left));
+  const float e = -((top + bottom)/(top - bottom));
+  const float f = -((farClip + nearClip)/(farClip - nearClip));
+
+  const float m[] = {
+    a, 0, 0, 0,
+    0, b, 0, 0,
+    0, 0, c, 0,
+    d, e, f, 1
+  };
+
+  Load(&m[0]);
+}
+
+void joGLMatrixStack::Rotate(float angle, float x, float y, float z) {
+  const float mag = sqrtf(x * x + y * y + z * z);
+
+  if (mag > 0.0f)
+  {
+    const float sinAngle = sinf(DEG2RAD(angle));
+    const float cosAngle = cosf(DEG2RAD(angle));    
+
+    x /= mag;
+    y /= mag;
+    z /= mag;
+
+    const float xx = x * x;
+    const float yy = y * y;
+    const float zz = z * z;
+    const float xy = x * y;
+    const float yz = y * z;
+    const float zx = z * x;
+    const float xs = x * sinAngle;
+    const float ys = y * sinAngle;
+    const float zs = z * sinAngle;
+    const float oneMinusCos = 1.0f - cosAngle;
+
+    float rotMat[4][4];
+
+    rotMat[0][0] = (oneMinusCos * xx) + cosAngle;
+    rotMat[1][0] = (oneMinusCos * xy) - zs;
+    rotMat[2][0] = (oneMinusCos * zx) + ys;
+    rotMat[3][0] = 0.0F;
+
+    rotMat[0][1] = (oneMinusCos * xy) + zs;
+    rotMat[1][1] = (oneMinusCos * yy) + cosAngle;
+    rotMat[2][1] = (oneMinusCos * yz) - xs;
+    rotMat[3][1] = 0.0F;
+
+    rotMat[0][2] = (oneMinusCos * zx) - ys;
+    rotMat[1][2] = (oneMinusCos * yz) + xs;
+    rotMat[2][2] = (oneMinusCos * zz) + cosAngle;
+    rotMat[3][2] = 0.0F;
+
+    rotMat[0][3] = 0.0F;
+    rotMat[1][3] = 0.0F;
+    rotMat[2][3] = 0.0F;
+    rotMat[3][3] = 1.0F;
+
+    float current[16];
+    Get(&current[0]);    
+
+    float result[16]; 
+    myGlMultMatrix(&rotMat[0][0], &current[0], &result[0]);    
+
+    Load(&result[0]);
+  }
+}
+
+void joGLMatrixStack::Translate(float x, float y, float z) {
+  const float translate[16] = { 
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    x, y, z, 1
+  };
+
+  float current[16];
+  Get(&current[0]);
+
+  float result[16];
+  myGlMultMatrix(&translate[0], &current[0], &result[0]);
+
+  Load(&result[0]);
+}
+
+void joGLMatrixStack::Get(float* dst) const {
+  memcpy(dst, Data(size), sizeof(Matrix));   
+}
+
+float* joGLMatrixStack::Data(int StackIndex) {
+  return &stack[StackIndex].m[0];
+}
+
+const float* joGLMatrixStack::Data(int StackIndex) const {
+  return &stack[StackIndex].m[0];
+}
+
+joGLMatrixStack GL_ProjectionMatrix(GL_PROJECTION);
+joGLMatrixStack GL_ModelViewMatrix(GL_MODELVIEW);
 
 /*
 ============================================================================
@@ -422,15 +595,15 @@ This is not used by the normal game paths, just by some tools
 */
 void RB_SetGL2D( void ) {
 	// set 2D virtual screen size
-	qglViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+	glViewport( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	if ( r_useScissor.GetBool() ) {
-		qglScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
+		glScissor( 0, 0, glConfig.vidWidth, glConfig.vidHeight );
 	}
-	qglMatrixMode( GL_PROJECTION );
-    qglLoadIdentity();
-	qglOrtho( 0, 640, 480, 0, 0, 1 );		// always assume 640x480 virtual coordinates
-	qglMatrixMode( GL_MODELVIEW );
-    qglLoadIdentity();
+
+  GL_ProjectionMatrix.LoadIdentity();
+  GL_ProjectionMatrix.Ortho( 0, 640, 480, 0, 0, 1 ); // always assume 640x480 virtual coordinates
+
+  GL_ModelViewMatrix.LoadIdentity();
 
 	GL_State( GLS_DEPTHFUNC_ALWAYS |
 			  GLS_SRCBLEND_SRC_ALPHA |
@@ -438,8 +611,8 @@ void RB_SetGL2D( void ) {
 
 	GL_Cull( CT_TWO_SIDED );
 
-	qglDisable( GL_DEPTH_TEST );
-	qglDisable( GL_STENCIL_TEST );
+	glDisable( GL_DEPTH_TEST );
+	glDisable( GL_STENCIL_TEST );
 }
 
 
@@ -459,7 +632,16 @@ static void	RB_SetBuffer( const void *data ) {
 
 	backEnd.frameCount = cmd->frameCount;
 
-	qglDrawBuffer( cmd->buffer );
+	if (r_useFramebuffer.GetBool()) {
+		int width = glConfig.vidWidth;
+		int height = glConfig.vidHeight;
+
+		fhFramebuffer::renderFramebuffer->Resize( width, height );
+		fhFramebuffer::renderFramebuffer->Bind();
+	}
+	else {
+		fhFramebuffer::defaultFramebuffer->Bind();
+	}
 
 	// clear screen for debugging
 	// automatically enable this with several other debug tools
@@ -467,16 +649,16 @@ static void	RB_SetBuffer( const void *data ) {
 	if ( r_clear.GetFloat() || idStr::Length( r_clear.GetString() ) != 1 || r_lockSurfaces.GetBool() || r_singleArea.GetBool() || r_showOverDraw.GetBool() ) {
 		float c[3];
 		if ( sscanf( r_clear.GetString(), "%f %f %f", &c[0], &c[1], &c[2] ) == 3 ) {
-			qglClearColor( c[0], c[1], c[2], 1 );
+			glClearColor( c[0], c[1], c[2], 1 );
 		} else if ( r_clear.GetInteger() == 2 ) {
-			qglClearColor( 0.0f, 0.0f,  0.0f, 1.0f );
+			glClearColor( 0.0f, 0.0f,  0.0f, 1.0f );
 		} else if ( r_showOverDraw.GetBool() ) {
-			qglClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
+			glClearColor( 1.0f, 1.0f, 1.0f, 1.0f );
 		} else {
-			qglClearColor( 0.4f, 0.0f, 0.25f, 1.0f );
+			glClearColor( 0.4f, 0.0f, 0.25f, 1.0f );
 		}
-		qglClear( GL_COLOR_BUFFER_BIT );
-	}
+		glClear( GL_COLOR_BUFFER_BIT );
+	}	
 }
 
 /*
@@ -495,10 +677,10 @@ void RB_ShowImages( void ) {
 
 	RB_SetGL2D();
 
-	//qglClearColor( 0.2, 0.2, 0.2, 1 );
-	//qglClear( GL_COLOR_BUFFER_BIT );
+	//glClearColor( 0.2, 0.2, 0.2, 1 );
+	//glClear( GL_COLOR_BUFFER_BIT );
 
-	qglFinish();
+	glFinish();
 
 	start = Sys_Milliseconds();
 
@@ -520,20 +702,22 @@ void RB_ShowImages( void ) {
 			h *= image->uploadHeight / 512.0f;
 		}
 
-		image->Bind();
-		qglBegin (GL_QUADS);
-		qglTexCoord2f( 0, 0 );
-		qglVertex2f( x, y );
-		qglTexCoord2f( 1, 0 );
-		qglVertex2f( x + w, y );
-		qglTexCoord2f( 1, 1 );
-		qglVertex2f( x + w, y + h );
-		qglTexCoord2f( 0, 1 );
-		qglVertex2f( x, y + h );
-		qglEnd();
+		fhImmediateMode im;
+		im.Color3f(1,1,1);
+		im.SetTexture(image);
+		im.Begin (GL_QUADS);
+		im.TexCoord2f( 0, 0 );
+		im.Vertex2f( x, y );
+		im.TexCoord2f( 1, 0 );
+		im.Vertex2f( x + w, y );
+		im.TexCoord2f( 1, 1 );
+		im.Vertex2f( x + w, y + h );
+		im.TexCoord2f( 0, 1 );
+		im.Vertex2f( x, y + h );
+		im.End();
 	}
 
-	qglFinish();
+	glFinish();
 
 	end = Sys_Milliseconds();
 	common->Printf( "%i msec to draw all images\n", end - start );
@@ -554,15 +738,17 @@ const void	RB_SwapBuffers( const void *data ) {
 
 	// force a gl sync if requested
 	if ( r_finish.GetBool() ) {
-		qglFinish();
+		glFinish();
 	}
 
     RB_LogComment( "***************** RB_SwapBuffers *****************\n\n\n" );
-
-	// don't flip if drawing to front buffer
-	if ( !r_frontBuffer.GetBool() ) {
-	    GLimp_SwapBuffers();
+	
+	if (r_useFramebuffer.GetBool()) {		
+		fhFramebuffer::defaultFramebuffer->Bind();
+		fhFramebuffer::renderFramebuffer->BlitToCurrentFramebuffer();
 	}
+
+    GLimp_SwapBuffers();
 }
 
 /*
@@ -645,8 +831,8 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	}
 
 	// go back to the default texture so the editor doesn't mess up a bound image
-	qglBindTexture( GL_TEXTURE_2D, 0 );
-	backEnd.glState.tmu[0].current2DMap = -1;
+	//glBindTexture( GL_TEXTURE_2D, 0 );
+	backEnd.glState.tmu[0].currentTexture = 0;
 
 	// stop rendering on this thread
 	backEndFinishTime = Sys_Milliseconds();

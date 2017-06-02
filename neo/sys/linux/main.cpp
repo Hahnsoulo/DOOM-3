@@ -145,43 +145,6 @@ const char *Sys_EXEPath( void ) {
 }
 
 /*
-================
-Sys_DefaultBasePath
-
-Get the default base path
-- binary image path
-- current directory
-- hardcoded
-Try to be intelligent: if there is no BASE_GAMEDIR, try the next path
-================
-*/
-const char *Sys_DefaultBasePath(void) {
-	struct stat st;
-	idStr testbase;
-	basepath = Sys_EXEPath();
-	if ( basepath.Length() ) {
-		basepath.StripFilename();
-		testbase = basepath; testbase += "/"; testbase += BASE_GAMEDIR;
-		if ( stat( testbase.c_str(), &st ) != -1 && S_ISDIR( st.st_mode ) ) {
-			return basepath.c_str();
-		} else {
-			common->Printf( "no '%s' directory in exe path %s, skipping\n", BASE_GAMEDIR, basepath.c_str() );
-		}
-	}
-	if ( basepath != Posix_Cwd() ) {
-		basepath = Posix_Cwd();
-		testbase = basepath; testbase += "/"; testbase += BASE_GAMEDIR;
-		if ( stat( testbase.c_str(), &st ) != -1 && S_ISDIR( st.st_mode ) ) {
-			return basepath.c_str();
-		} else {
-			common->Printf("no '%s' directory in cwd path %s, skipping\n", BASE_GAMEDIR, basepath.c_str());
-		}
-	}
-	common->Printf( "WARNING: using hardcoded default base path\n" );
-	return LINUX_DEFAULT_PATH;
-}
-
-/*
 ===============
 Sys_GetConsoleKey
 ===============
@@ -243,6 +206,8 @@ Sys_GetClockticks
 ===============
 */
 double Sys_GetClockTicks( void ) {
+#if 0
+
 #if defined( __i386__ )
 	unsigned long lo, hi;
 
@@ -259,6 +224,13 @@ double Sys_GetClockTicks( void ) {
 #else
 #error unsupported CPU
 #endif
+
+#else
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return static_cast<double>(ts.tv_nsec);
+#endif
+
 }
 
 /*

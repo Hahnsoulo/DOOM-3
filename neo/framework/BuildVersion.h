@@ -25,4 +25,6 @@ If you have questions concerning this license or the applicable additional terms
 
 ===========================================================================
 */
-const int BUILD_NUMBER = 1304;
+
+extern const int BUILD_NUMBER;
+extern const char* ENGINE_VERSION;

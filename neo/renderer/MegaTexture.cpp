@@ -224,31 +224,31 @@ void idMegaTexture::BindForViewOrigin( const idVec3 viewOrigin ) {
 	SetViewOrigin( viewOrigin );
 
 	// borderClamp image goes in texture 0
-	GL_SelectTexture( 0 );
-	globalImages->borderClampImage->Bind();
+	//GL_SelectTexture( 0 );
+	globalImages->borderClampImage->Bind(0);
 
 	// level images in higher textures, blurriest first
 	for ( int i = 0 ; i < 7 ; i++ ) {
-		GL_SelectTexture( 1+i );
+		//GL_SelectTexture( 1+i );
 
 		if ( i >= numLevels ) {
-			globalImages->whiteImage->Bind();
+			globalImages->whiteImage->Bind( 1+i );
 
 			static float	parms[4] = { -2, -2, 0, 1 };	// no contribution
-			qglProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, i, parms );
+			glProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, i, parms );
 		} else {
 			idTextureLevel	*level = &levels[ numLevels-1-i ];
 			
 			if ( r_showMegaTexture.GetBool() ) {
 				if ( i & 1 ) {
-					globalImages->blackImage->Bind();
+					globalImages->blackImage->Bind( 1+i );
 				} else {
-					globalImages->whiteImage->Bind();
+					globalImages->whiteImage->Bind( 1+i );
 				}
 			} else {
-				level->image->Bind();
+				level->image->Bind( 1+i );
 			}
-			qglProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, i, level->parms );
+			glProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, i, level->parms );
 		}
 	}
 
@@ -257,13 +257,13 @@ void idMegaTexture::BindForViewOrigin( const idVec3 viewOrigin ) {
 	parms[1] = 0;
 	parms[2] = 0;
 	parms[3] = 1;
-	qglProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 7, parms );
+	glProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 7, parms );
 
 	parms[0] = 1;
 	parms[1] = 1;
 	parms[2] = r_terrainScale.GetFloat();
 	parms[3] = 1;
-	qglProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 8, parms );
+	glProgramLocalParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 8, parms );
 }
 
 /*
@@ -361,7 +361,7 @@ void idTextureLevel::UpdateTile( int localX, int localY, int globalX, int global
 
 	if ( idMegaTexture::r_showMegaTextureLabels.GetBool() ) {
 		// put a color marker in it
-		byte	color[4] = { 255 * localX / TILE_PER_LEVEL, 255 * localY / TILE_PER_LEVEL, 0, 0 };
+		byte	color[4] = { static_cast<byte>(255 * localX / TILE_PER_LEVEL), static_cast<byte>(255 * localY / TILE_PER_LEVEL), 0, 0 };
 		for ( int x = 0 ; x < 8 ; x++ ) {
 			for ( int y = 0 ; y < 8 ; y++ ) {
 				*(int *)&data[ ( ( y + TILE_SIZE/2 - 4 ) * TILE_SIZE + x + TILE_SIZE/2 - 4 ) * 4 ] = *(int *)color;
@@ -373,7 +373,7 @@ void idTextureLevel::UpdateTile( int localX, int localY, int globalX, int global
 	int	level = 0;
 	int size = TILE_SIZE;
 	while ( 1 ) {
-		qglTexSubImage2D( GL_TEXTURE_2D, level, localX * size, localY * size, size, size, GL_RGBA, GL_UNSIGNED_BYTE, data );
+		glTexSubImage2D( GL_TEXTURE_2D, level, localX * size, localY * size, size, size, GL_RGBA, GL_UNSIGNED_BYTE, data );
 		size >>= 1;
 		level++;
 
@@ -436,7 +436,7 @@ void idTextureLevel::UpdateForCenter( float center[2] ) {
 		}
 	}
 
-	image->Bind();
+	image->Bind(0 /*?*/);
 
 	for ( int x = 0 ; x < TILE_PER_LEVEL ; x++ ) {
 		for ( int y = 0 ; y < TILE_PER_LEVEL ; y++ ) {
@@ -539,7 +539,7 @@ void	idMegaTexture::GenerateMegaMipMaps( megaTextureHeader_t *header, idFile *ou
 
 						if ( tx > width || ty > height ) {
 							// off edge, zero fill
-							memset( newBlock, 0, sizeof( newBlock ) );
+							memset( newBlock, 0, tileSize );
 						} else {
 							tileNum = tileOffset + ty * width + tx;
 							inFile->Seek( tileNum * tileSize, FS_SEEK_SET );

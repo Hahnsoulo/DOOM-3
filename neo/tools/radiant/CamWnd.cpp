@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "../../renderer/tr_local.h"
 #include "../../renderer/model_local.h"	// for idRenderModelMD5
+#include "../../renderer/ImmediateMode.h"
 
 #ifdef _DEBUG
 	#define new DEBUG_NEW
@@ -76,8 +77,6 @@ IMPLEMENT_DYNCREATE(CCamWnd, CWnd);
 CCamWnd::CCamWnd() {
 	m_pXYFriend = NULL;
 	memset(&m_Camera, 0, sizeof(camera_t));
-	m_pSide_select = NULL;
-	m_bClipMode = false;
 	worldDirty = true;
 	worldModel = NULL;
 	renderMode = false;
@@ -194,16 +193,18 @@ brush_t *g_pSplitList = NULL;
  =======================================================================================================================
  =======================================================================================================================
  */
-void CCamWnd::OnPaint() {
+void CCamWnd::OnPaint() {  
 	CPaintDC	dc(this);	// device context for painting
-	bool		bPaint = true;
+	bool		bPaint = true;  
 
-	if (!qwglMakeCurrent(dc.m_hDC, win32.hGLRC)) {
+	if (!wglMakeCurrent(dc.m_hDC, win32.hGLRC)) {
 		common->Printf("ERROR: wglMakeCurrent failed..\n ");
 		common->Printf("Please restart " EDITOR_WINDOWTEXT " if the camera view is not working\n");
 	}
 	else {
+	    fhImmediateMode::ResetStats();
 		QE_CheckOpenGLForErrors();
+
 		g_pSplitList = NULL;
 		if (g_bClipMode) {
 			if (g_Clip1.Set() && g_Clip2.Set()) {
@@ -213,7 +214,7 @@ void CCamWnd::OnPaint() {
 
 		Cam_Draw();
 		QE_CheckOpenGLForErrors();
-		qwglSwapBuffers(dc.m_hDC);
+		wglSwapBuffers(dc.m_hDC);
 	}
 }
 
@@ -331,61 +332,11 @@ int CCamWnd::OnCreate(LPCREATESTRUCT lpCreateStruct) {
 
 	QEW_SetupPixelFormat(hDC, true);
 
-	HFONT hfont = CreateFont(
-				12,	// logical height of font 
-				0,	// logical average character width 
-				0,	// angle of escapement 
-				0,	// base-line orientation angle 
-				0,	// font weight 
-				0,	// italic attribute flag 
-				0,	// underline attribute flag 
-				0,	// strikeout attribute flag 
-				0,	// character set identifier 
-				0,	// output precision 
-				0,	// clipping precision 
-				0,	// output quality 
-				FIXED_PITCH | FF_MODERN,	// pitch and family 
-				"Lucida Console" 	// pointer to typeface name string 
-				);
-
-	if (!hfont) {
-		Error("couldn't create font");
-	}
-
-	HFONT hOldFont = (HFONT)SelectObject(hDC, hfont);
-
-	wglMakeCurrent (hDC, win32.hGLRC);
-
-	if ((g_qeglobals.d_font_list = qglGenLists(256)) == 0) {
-		common->Warning( "couldn't create font dlists" );
-	}
-
-	// create the bitmap display lists we're making images of glyphs 0 thru 255
-	if ( !qwglUseFontBitmaps(hDC, 0, 255, g_qeglobals.d_font_list) ) {
-		common->Warning( "wglUseFontBitmaps failed (%d).  Trying again.", GetLastError() );
-
-		// FIXME: This is really wacky, sometimes the first call fails, but calling it again makes it work
-		//		This probably indicates there's something wrong somewhere else in the code, but I'm not sure what
-		if ( !qwglUseFontBitmaps(hDC, 0, 255, g_qeglobals.d_font_list) ) {
-			common->Warning( "wglUseFontBitmaps failed again (%d).  Trying outlines.", GetLastError() );
-
-			if (!qwglUseFontOutlines(hDC, 0, 255, g_qeglobals.d_font_list, 0.0f, 0.1f, WGL_FONT_LINES, NULL)) {
-				common->Warning( "wglUseFontOutlines also failed (%d), no coordinate text will be visible.", GetLastError() );
-			}
-		}
-	}
-
-	SelectObject(hDC, hOldFont);
-	ReleaseDC(pDC);
-
-	// indicate start of glyph display lists
-	qglListBase(g_qeglobals.d_font_list);
-
 	// report OpenGL information
-	common->Printf("GL_VENDOR: %s\n", qglGetString(GL_VENDOR));
-	common->Printf("GL_RENDERER: %s\n", qglGetString(GL_RENDERER));
-	common->Printf("GL_VERSION: %s\n", qglGetString(GL_VERSION));
-	common->Printf("GL_EXTENSIONS: %s\n", qglGetString(GL_EXTENSIONS));
+	common->Printf("GL_VENDOR: %s\n", glGetString(GL_VENDOR));
+	common->Printf("GL_RENDERER: %s\n", glGetString(GL_RENDERER));
+	common->Printf("GL_VERSION: %s\n", glGetString(GL_VERSION));
+	//common->Printf("GL_EXTENSIONS: %s\n", glGetString(GL_EXTENSIONS));
 
 	return 0;
 }
@@ -437,12 +388,9 @@ void CCamWnd::Cam_Init() {
  =======================================================================================================================
  */
 void CCamWnd::Cam_BuildMatrix() {
-	float	xa, ya;
-	float	matrix[4][4];
-	int		i;
 
-	xa = ((renderMode) ? -m_Camera.angles[PITCH] : m_Camera.angles[PITCH]) * idMath::M_DEG2RAD;
-	ya = m_Camera.angles[YAW] * idMath::M_DEG2RAD;
+	const float xa = ((renderMode) ? -m_Camera.angles[PITCH] : m_Camera.angles[PITCH]) * idMath::M_DEG2RAD;
+	const float ya = m_Camera.angles[YAW] * idMath::M_DEG2RAD;
 
 	// the movement matrix is kept 2d
 	m_Camera.forward[0] = cos(ya);
@@ -450,9 +398,10 @@ void CCamWnd::Cam_BuildMatrix() {
 	m_Camera.right[0] = m_Camera.forward[1];
 	m_Camera.right[1] = -m_Camera.forward[0];
 
-	qglGetFloatv(GL_PROJECTION_MATRIX, &matrix[0][0]);
+  float	matrix[4][4];
+  GL_ProjectionMatrix.Get(&matrix[0][0]);
 
-	for (i = 0; i < 3; i++) {
+	for (int i = 0; i < 3; i++) {
 		m_Camera.vright[i] = matrix[i][0];
 		m_Camera.vup[i] = matrix[i][1];
 		m_Camera.vpn[i] = matrix[i][2];
@@ -601,8 +550,7 @@ void CCamWnd::Cam_MouseControl(float dtime) {
 	}
 
 	Cam_BuildMatrix();
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 	g_pParentWnd->PostMessage(WM_TIMER, 0, 0);
 }
 
@@ -740,49 +688,45 @@ void CCamWnd::InitCull() {
  =======================================================================================================================
  */
 bool CCamWnd::CullBrush(brush_t *b, bool cubicOnly) {
-	int		i;
 	idVec3	point;
-	float	d;
 
 	if ( b->forceVisibile ) {
 		return false;
 	}
 
+  idBounds bounds = idBounds(b->mins, b->maxs);
+  editorModel_t editorModel = Brush_GetEditorModel(b);
+  bounds.AddBounds(editorModel.bounds);
+  bounds.AddBounds(editorModel.model->Bounds());
+
 	if (g_PrefsDlg.m_bCubicClipping) {
 		
-		float distance = g_PrefsDlg.m_nCubicScale * 64;
+		const float maxDistance = g_PrefsDlg.m_nCubicScale * 64;
 
-		idVec3 mid;
-		for (int i = 0; i < 3; i++) {
-			mid[i] = (b->mins[i] + ((b->maxs[i] - b->mins[i]) / 2));
-		}
+    idVec3 distance = bounds.GetCenter() - m_Camera.origin; 
 
-		point = mid - m_Camera.origin;
-		if (point.Length() > distance) {
+		if (distance.Length() > maxDistance) {
 			return true;
 		}
-
 	}
 
 	if (cubicOnly) {
 		return false;
 	}
 
-	for (i = 0; i < 3; i++) {
-		point[i] = b->mins[m_nCullv1[i]] - m_Camera.origin[i];
+	for (int i = 0; i < 3; i++) {
+		point[i] = bounds[0][m_nCullv1[i]] - m_Camera.origin[i];
 	}
 
-	d = DotProduct(point, m_vCull1);
-	if (d < -1) {
+	if (DotProduct(point, m_vCull1) < -1) {
 		return true;
 	}
 
-	for (i = 0; i < 3; i++) {
-		point[i] = b->mins[m_nCullv2[i]] - m_Camera.origin[i];
+	for (int i = 0; i < 3; i++) {
+		point[i] = bounds[0][m_nCullv2[i]] - m_Camera.origin[i];
 	}
 
-	d = DotProduct(point, m_vCull2);
-	if (d < -1) {
+	if (DotProduct(point, m_vCull2) < -1) {
 		return true;
 	}
 
@@ -800,11 +744,11 @@ void CCamWnd::DrawLightRadius(brush_t *pBrush) {
 	int nRadius = Brush_LightRadius(pBrush);
 	if (nRadius > 0) {
 		Brush_SetLightColor(pBrush);
-		qglEnable(GL_BLEND);
-		qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		qglDisable(GL_BLEND);
-		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		glEnable(GL_BLEND);
+		glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glDisable(GL_BLEND);
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	}
 }
 #endif
@@ -817,43 +761,33 @@ void setGLMode(int mode) {
 	switch (mode)
 	{
 		case cd_wire:
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 			globalImages->BindNull();
-			qglDisable(GL_BLEND);
-			qglDisable(GL_DEPTH_TEST);
-			qglColor3f( 1.0f, 1.0f, 1.0f );
+			glDisable(GL_BLEND);
+			glDisable(GL_DEPTH_TEST);			
 			break;
 
 		case cd_solid:
-			qglCullFace(GL_FRONT);
-			qglEnable(GL_CULL_FACE);
-			qglShadeModel(GL_FLAT);
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+			glCullFace(GL_FRONT);
+			glEnable(GL_CULL_FACE);			
+			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 			globalImages->BindNull();
-			qglDisable(GL_BLEND);
-			qglEnable(GL_DEPTH_TEST);
-			qglDepthFunc(GL_LEQUAL);
+			glDisable(GL_BLEND);
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_LEQUAL);
 			break;
 
 		case cd_texture:
-			qglCullFace(GL_FRONT);
-			qglEnable(GL_CULL_FACE);
-			qglShadeModel(GL_FLAT);
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-			qglDisable(GL_BLEND);
-			qglEnable(GL_DEPTH_TEST);
-			qglDepthFunc(GL_LEQUAL);
+			glCullFace(GL_FRONT);
+			glEnable(GL_CULL_FACE);			
+			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+			glDisable(GL_BLEND);
+			glEnable(GL_DEPTH_TEST);
+			glDepthFunc(GL_LEQUAL);
 			break;
 
-		case cd_blend:
-			qglCullFace(GL_FRONT);
-			qglEnable(GL_CULL_FACE);
-			qglShadeModel(GL_FLAT);
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-			qglDisable(GL_DEPTH_TEST);
-			qglEnable(GL_BLEND);
-			qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-			break;
+    default:
+      assert(false && "unknown GL mode!?");
 	}
 }
 
@@ -876,12 +810,13 @@ void DrawAxial(face_t *selFace) {
 		VectorMA (points[3], 4, selFace->plane, points[2]);
 		glLabeledPoint(idVec4(1, 0, 0, 1), points[1], 3, "Anchor");
 		glLabeledPoint(idVec4(1, 1, 0, 1), points[2], 3, "Dest");
-		qglBegin (GL_LINE_STRIP);
-		qglVertex3fv( points[0].ToFloatPtr() );
-		qglVertex3fv( points[1].ToFloatPtr() );
-		qglVertex3fv( points[2].ToFloatPtr() );
-		qglVertex3fv( points[3].ToFloatPtr() );
-		qglEnd();
+    fhImmediateMode im;
+		im.Begin (GL_LINE_STRIP);
+		im.Vertex3fv( points[0].ToFloatPtr() );
+		im.Vertex3fv( points[1].ToFloatPtr() );
+		im.Vertex3fv( points[2].ToFloatPtr() );
+		im.Vertex3fv( points[3].ToFloatPtr() );
+		im.End();
 	}
 }
 
@@ -896,7 +831,7 @@ void CCamWnd::SetProjectionMatrix() {
 	float yfov = 2 * atan((float)m_Camera.height / m_Camera.width) * idMath::M_RAD2DEG;
 #if 0
 	float screenaspect = (float)m_Camera.width / m_Camera.height;
-	qglLoadIdentity();
+	glLoadIdentity();
 	gluPerspective(yfov, screenaspect, 2, 8192);
 #else
 	float	xmin, xmax, ymin, ymax;
@@ -939,7 +874,7 @@ void CCamWnd::SetProjectionMatrix() {
 	projectionMatrix[11] = -1;
 	projectionMatrix[15] = 0;
 
-	qglLoadMatrixf( projectionMatrix );
+  GL_ProjectionMatrix.Load(projectionMatrix);	
 #endif
 }
 
@@ -963,27 +898,30 @@ void CCamWnd::Cam_Draw() {
 		Cam_Render();
 	}
 
-	qglViewport(0, 0, m_Camera.width, m_Camera.height);
-	qglScissor(0, 0, m_Camera.width, m_Camera.height);
-	qglClearColor(g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][0], g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][1], g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][2], 0);
+	glViewport(0, 0, m_Camera.width, m_Camera.height);
+	glScissor(0, 0, m_Camera.width, m_Camera.height);
+	glClearColor(g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][0], g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][1], g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][2], 0);
 
 	if (!renderMode) {
-		qglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 
-	qglDisable(GL_LIGHTING);
-	qglMatrixMode(GL_PROJECTION);
-
 	SetProjectionMatrix();
+  g_qeglobals.surfaceBuffer.Clear();
+  g_qeglobals.lineBuffer.Clear();
+  g_qeglobals.pointBuffer.Clear();
 
-	qglRotatef(-90, 1, 0, 0);	// put Z going up
-	qglRotatef(90, 0, 0, 1);	// put Z going up
-	qglRotatef(m_Camera.angles[0], 0, 1, 0);
-	qglRotatef(-m_Camera.angles[1], 0, 0, 1);
-	qglTranslatef(-m_Camera.origin[0], -m_Camera.origin[1], -m_Camera.origin[2]);
+  GL_ProjectionMatrix.Rotate(-90.0f, 1.f, 0.f, 0.f); // put Z going up
+  GL_ProjectionMatrix.Rotate(90.0f, 0.f, 0.f, 1.f); // put Z going up
+  GL_ProjectionMatrix.Rotate(m_Camera.angles[0], 0, 1, 0);
+  GL_ProjectionMatrix.Rotate(-m_Camera.angles[1], 0, 0, 1);
+  GL_ProjectionMatrix.Translate(-m_Camera.origin[0], -m_Camera.origin[1], -m_Camera.origin[2]);
 
 	Cam_BuildMatrix();
+
+  brush_t *pList = (g_bClipMode && g_pSplitList) ? g_pSplitList : &selected_brushes;
    
+  g_qeglobals.surfaceBuffer.Clear();
 	for (brush = active_brushes.next; brush != &active_brushes; brush = brush->next) {
 
 		if ( CullBrush(brush, false) ) {
@@ -1001,117 +939,139 @@ void CCamWnd::Cam_Draw() {
 		}
 
 		setGLMode(m_Camera.draw_mode);
-		Brush_Draw(brush);
+    Brush_Draw(brush, false);
 	}
 
+  if (!renderMode) {
+    // draw normally
+    for (brush = pList->next; brush != pList; brush = brush->next) {
+      setGLMode(m_Camera.draw_mode);
+      Brush_Draw(brush, true);
+    }
+  }
 
-	//qglDepthMask ( 1 ); // Ok, write now
-	qglMatrixMode(GL_PROJECTION);
+  g_qeglobals.surfaceBuffer.Commit();	
+  g_qeglobals.lineBuffer.Commit();	
+  g_qeglobals.pointBuffer.Commit();	
 
-	qglTranslatef(g_qeglobals.d_select_translate[0],g_qeglobals.d_select_translate[1],g_qeglobals.d_select_translate[2]);
+  g_qeglobals.surfaceBuffer.Clear();
+  g_qeglobals.lineBuffer.Clear();
+  g_qeglobals.pointBuffer.Clear();
 
-	brush_t *pList = (g_bClipMode && g_pSplitList) ? g_pSplitList : &selected_brushes;
 
-	if (!renderMode) {
-		// draw normally
-		for (brush = pList->next; brush != pList; brush = brush->next) {
-			if (brush->pPatch) {
-				continue;
-			}
-			setGLMode(m_Camera.draw_mode);
-			Brush_Draw(brush, true);
-		}
-	}
-
-	// blend on top
+  const idVec4 color = idVec4(g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES], 0.25f );
 
 	setGLMode(m_Camera.draw_mode);
-	qglDisable(GL_LIGHTING);
-	qglColor4f( g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][0],g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][1],g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][2], 0.25f );
-	qglEnable(GL_BLEND);
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	globalImages->BindNull();
+   
+
+	glEnable(GL_BLEND);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	globalImages->BindNull();  
+
+  if(renderMode) {
+    for (brush = pList->next; brush != pList; brush = brush->next) {
+      if (brush->pPatch /*|| brush->modelHandle > 0*/) {        
+        DrawPatchMeshWireframe(brush->pPatch, idVec3(1,1,1));
+      }
+    }
+  }
+
 	for (brush = pList->next; brush != pList; brush = brush->next) {
-		if (brush->pPatch || brush->modelHandle > 0) {
-			Brush_Draw(brush, true);
 
-			// DHM - Nerve:: patch display lists/models mess with the state
-			qglEnable(GL_BLEND);
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-			qglColor4f( g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][0],g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][1],g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][2], 0.25f );
-			globalImages->BindNull();
-			continue;
+    if(brush->pPatch) {
+      DrawPatchMeshSolid(brush->pPatch, color);
+      DrawPatchMeshWireframe(brush->pPatch, idVec3(1,1,1));
+      DrawPatchMeshHandles(brush->pPatch);
+      continue;
+    }
+
+		if ( brush->modelHandle > 0) {
+      continue;
 		}
 
-        if ( brush->owner->eclass->entityModel ) {
-            continue;
-        }
-
-		for (face = brush->brush_faces; face; face = face->next) {
-			Face_Draw(face);
+    if ( brush->owner->eclass->entityModel ) {
+        continue;
+    }
+    
+		for (face = brush->brush_faces; face; face = face->next) {      
+			Face_Draw(face, color);      
 		}
-	}
+	} 
 
 	int nCount = g_ptrSelectedFaces.GetSize();
 
 	if (!renderMode) {
 		for (int i = 0; i < nCount; i++) {
 			face_t	*selFace = reinterpret_cast < face_t * > (g_ptrSelectedFaces.GetAt(i));
-			Face_Draw(selFace);
-			DrawAxial(selFace);
+			Face_Draw(selFace, color);
 		}
 	} 
 
-	// non-zbuffered outline
-	qglDisable(GL_BLEND);
-	qglDisable(GL_DEPTH_TEST);
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+  g_qeglobals.surfaceBuffer.Commit();
+  g_qeglobals.surfaceBuffer.Clear();
 
-	if (renderMode) {
-		qglColor3f(1, 0, 0);
-		for (int i = 0; i < nCount; i++) {
+  if (!renderMode) {
+    for (int i = 0; i < g_ptrSelectedFaces.GetSize(); i++) {
+      face_t	*selFace = reinterpret_cast <face_t *> (g_ptrSelectedFaces.GetAt(i));   
+      DrawAxial(selFace);
+    }
+  }
+
+  g_qeglobals.lineBuffer.Commit();
+
+	// non-zbuffered outline
+	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+  
+	if (renderMode) {		
+		for (int i = 0; i < g_ptrSelectedFaces.GetSize(); i++) {
 			face_t	*selFace = reinterpret_cast < face_t * > (g_ptrSelectedFaces.GetAt(i));
-			Face_Draw(selFace);
+			Face_DrawOutline( selFace, idVec3(1,0,0));
 		}
 	}
-
-	qglColor3f(1, 1, 1);
+	
 	for (brush = pList->next; brush != pList; brush = brush->next) {
 		if (brush->pPatch || brush->modelHandle > 0) {
 			continue;
 		}
 
 		for (face = brush->brush_faces; face; face = face->next) {
-			Face_Draw(face);
+			Face_DrawOutline( face, idVec3(1,1,1));
 		}
 	}
+  
+  g_qeglobals.lineBuffer.Commit();
+  g_qeglobals.lineBuffer.Clear();
+
 	// edge / vertex flags
+  fhImmediateMode im;
 	if (g_qeglobals.d_select_mode == sel_vertex) {
-		qglPointSize(4);
-		qglColor3f(0, 1, 0);
-		qglBegin(GL_POINTS);
+		glPointSize(4);
+
+		im.Color3f(0, 1, 0);
+		im.Begin(GL_POINTS);
 		for (i = 0; i < g_qeglobals.d_numpoints; i++) {
-			qglVertex3fv( g_qeglobals.d_points[i].ToFloatPtr() );
+			im.Vertex3fv( g_qeglobals.d_points[i].ToFloatPtr() );
 		}
 
-		qglEnd();
-		qglPointSize(1);
+		im.End();
+		glPointSize(1);
 	}
 	else if (g_qeglobals.d_select_mode == sel_edge) {
 		float	*v1, *v2;
 
-		qglPointSize(4);
-		qglColor3f(0, 0, 1);
-		qglBegin(GL_POINTS);
+		glPointSize(4);
+		im.Color3f(0, 0, 1);
+		im.Begin(GL_POINTS);
 		for (i = 0; i < g_qeglobals.d_numedges; i++) {
 			v1 = g_qeglobals.d_points[g_qeglobals.d_edges[i].p1].ToFloatPtr();
 			v2 = g_qeglobals.d_points[g_qeglobals.d_edges[i].p2].ToFloatPtr();
-			qglVertex3f( (v1[0] + v2[0]) * 0.5f, (v1[1] + v2[1]) * 0.5f, (v1[2] + v2[2]) * 0.5f );
+			im.Vertex3f( (v1[0] + v2[0]) * 0.5f, (v1[1] + v2[1]) * 0.5f, (v1[2] + v2[2]) * 0.5f );
 		}
 
-		qglEnd();
-		qglPointSize(1);
+		im.End();
+		glPointSize(1);
 	}
 
 	g_splineList->draw (static_cast<bool>(g_qeglobals.d_select_mode == sel_addpoint || g_qeglobals.d_select_mode == sel_editpoint));
@@ -1121,13 +1081,12 @@ void CCamWnd::Cam_Draw() {
 	}
 
 	// draw pointfile
-	qglEnable(GL_DEPTH_TEST);
+	glEnable(GL_DEPTH_TEST);
 
 	DrawPathLines();
-
-	if (g_qeglobals.d_pointfile_display_list) {
-		Pointfile_Draw();
-	}
+  Pointfile_Draw();
+	
+  g_qeglobals.lineBuffer.Commit();
 
 	//
 	// bind back to the default texture so that we don't have problems elsewhere
@@ -1135,7 +1094,7 @@ void CCamWnd::Cam_Draw() {
 	//
 	globalImages->BindNull();
 
-	qglFinish();
+	glFinish();
 	QE_CheckOpenGLForErrors();
 
 	if (!renderMode) {
@@ -1217,9 +1176,9 @@ void CCamWnd::ShiftTexture_BrushPrimit(face_t *f, int x, int y) {
 
 
 bool IsBModel(brush_t *b) {
-	const char *v = ValueForKey( b->owner, "model" );
+	const char *v = b->owner->ValueForKey( "model" );
 	if (v && *v) {
-		const char *n = ValueForKey( b->owner, "name");
+		const char *n = b->owner->ValueForKey("name");
 		return (stricmp( n, v ) == 0);
 	}
 	return false;
@@ -1239,7 +1198,7 @@ void CCamWnd::BuildEntityRenderState( entity_t *ent, bool update) {
 	idDict		spawnArgs;
 	const char	*name = NULL;
 
-	Entity_UpdateSoundEmitter( ent );
+	ent->UpdateSoundEmitter();
 
 	// delete the existing def if we aren't creating a brand new world
 	if ( !update ) {
@@ -1270,7 +1229,7 @@ void CCamWnd::BuildEntityRenderState( entity_t *ent, bool update) {
 	}
 
 	// any entity can have a model
-	name = ValueForKey( ent, "name" );
+	name = ent->ValueForKey( "name" );
 	v = spawnArgs.GetString("model");
 	if ( v && *v ) {
 		renderEntity_t	refent;
@@ -1374,75 +1333,69 @@ void CCamWnd::BuildEntityRenderState( entity_t *ent, bool update) {
 
 }
 
-void Tris_ToOBJ(const char *outFile, idTriList *tris, idMatList *mats) {
-	idFile *f = fileSystem->OpenExplicitFileWrite( outFile );
-	if ( f ) {
-		char out[1024];
-		strcpy(out, outFile);
-		StripExtension(out);
+void Tris_ToOBJ(idTriList *tris, idMatList *mats, idFile* objFile, idFile* mtlFile) {
+	if(!tris || !objFile)
+		return;
 
-		idList<idStr*> matNames;
-		int i, j, k;
-		int indexBase = 1;
-		idStr lastMaterial("");
-		int matCount = 0;
-		//idStr basePath = cvarSystem->GetCVarString( "fs_savepath" );
-		f->Printf( "mtllib %s.mtl\n", out );
-		for (i = 0; i < tris->Num(); i++) {
-			srfTriangles_t *tri = (*tris)[i];
-			for (j = 0; j < tri->numVerts; j++) {
-				f->Printf( "v %f %f %f\n", tri->verts[j].xyz.x, tri->verts[j].xyz.z, -tri->verts[j].xyz.y );
-			}
-			for (j = 0; j < tri->numVerts; j++) {
-				f->Printf( "vt %f %f\n", tri->verts[j].st.x, 1.0f - tri->verts[j].st.y );
-			}
-			for (j = 0; j < tri->numVerts; j++) {
-				f->Printf( "vn %f %f %f\n", tri->verts[j].normal.x, tri->verts[j].normal.y, tri->verts[j].normal.z );
-			}
+	idList<idStr*> matNames;
+	int i, j, k;
+	int indexBase = 1;
+	idStr lastMaterial("");
+	int matCount = 0;
+	
+	if(mtlFile) {
+		objFile->Printf( "mtllib %s\n", mtlFile->GetName() );
+	}
 
-			if (stricmp( (*mats)[i]->GetName(), lastMaterial)) {
-				lastMaterial = (*mats)[i]->GetName();
-
-				bool found = false;
-				for (k = 0; k < matNames.Num(); k++) {
-					if ( idStr::Icmp(matNames[k]->c_str(), lastMaterial.c_str()) == 0 ) {
-						found = true;
-						// f->Printf( "usemtl m%i\n", k );
-						f->Printf( "usemtl %s\n", lastMaterial.c_str() );
-						break;
-					}
-				}
-
-				if (!found) {
-					// f->Printf( "usemtl m%i\n", matCount++ );
-					f->Printf( "usemtl %s\n", lastMaterial.c_str() );
-					matNames.Append(new idStr(lastMaterial));
-				}
-			}
-
-			for (int j = 0; j < tri->numIndexes; j += 3) {
-				int i1, i2, i3;
-				i1 = tri->indexes[j+2] + indexBase;
-				i2 = tri->indexes[j+1] + indexBase;
-				i3 = tri->indexes[j] + indexBase; 
-				f->Printf( "f %i/%i/%i %i/%i/%i %i/%i/%i\n", i1,i1,i1, i2,i2,i2, i3,i3,i3 );
-			}
-
-			indexBase += tri->numVerts;
-
+	for (i = 0; i < tris->Num(); i++) {
+		srfTriangles_t *tri = (*tris)[i];
+		for (j = 0; j < tri->numVerts; j++) {
+			objFile->Printf( "v %f %f %f\n", tri->verts[j].xyz.x, tri->verts[j].xyz.z, -tri->verts[j].xyz.y );
 		}
-		fileSystem->CloseFile( f );
+		for (j = 0; j < tri->numVerts; j++) {
+			objFile->Printf( "vt %f %f\n", tri->verts[j].st.x, 1.0f - tri->verts[j].st.y );
+		}
+		for (j = 0; j < tri->numVerts; j++) {
+			objFile->Printf( "vn %f %f %f\n", tri->verts[j].normal.x, tri->verts[j].normal.y, tri->verts[j].normal.z );
+		}
 
-		strcat(out, ".mtl");
-		f = fileSystem->OpenExplicitFileWrite( out );
-		if (f) {
+		if (mats && mats->Num() > i && stricmp( (*mats)[i]->GetName(), lastMaterial)) {
+			lastMaterial = (*mats)[i]->GetName();
+
+			bool found = false;
 			for (k = 0; k < matNames.Num(); k++) {
-				// This presumes the diffuse tga name matches the material name
-				f->Printf( "newmtl %s\n\tNs 0\n\td 1\n\tillum 2\n\tKd 0 0 0 \n\tKs 0.22 0.22 0.22 \n\tKa 0 0 0 \n\tmap_Kd %s/base/%s.tga\n\n\n", matNames[k]->c_str(), "z:/d3xp", matNames[k]->c_str() );
+				if ( idStr::Icmp(matNames[k]->c_str(), lastMaterial.c_str()) == 0 ) {
+					found = true;
+					// f->Printf( "usemtl m%i\n", k );
+					objFile->Printf( "usemtl %s\n", lastMaterial.c_str() );
+					break;
+				}
 			}
-			fileSystem->CloseFile( f );
+
+			if (!found) {
+				// f->Printf( "usemtl m%i\n", matCount++ );
+				objFile->Printf( "usemtl %s\n", lastMaterial.c_str() );
+				matNames.Append(new idStr(lastMaterial));
+			}
 		}
 
+		for (int j = 0; j < tri->numIndexes; j += 3) {
+			int i1, i2, i3;
+			i1 = tri->indexes[j+2] + indexBase;
+			i2 = tri->indexes[j+1] + indexBase;
+			i3 = tri->indexes[j] + indexBase; 
+			objFile->Printf( "f %i/%i/%i %i/%i/%i %i/%i/%i\n", i1,i1,i1, i2,i2,i2, i3,i3,i3 );
+		}
+
+		indexBase += tri->numVerts;
+
+	}
+
+	if(mats && mtlFile) {
+		for (k = 0; k < matNames.Num(); k++) {
+			// This presumes the diffuse tga name matches the material name
+			mtlFile->Printf( "newmtl %s\n\tNs 0\n\td 1\n\tillum 2\n\tKd 0 0 0 \n\tKs 0.22 0.22 0.22 \n\tKa 0 0 0 \n\tmap_Kd %s/base/%s.tga\n\n\n", matNames[k]->c_str(), "z:/d3xp", matNames[k]->c_str() );
+		}
 	}
 }
 
@@ -1451,7 +1404,7 @@ int Brush_TransformModel(brush_t *brush, idTriList *tris, idMatList *mats) {
 	if (brush->modelHandle > 0 ) {
 		idRenderModel *model = brush->modelHandle;
 		if (model) {
-			float	a = FloatForKey(brush->owner, "angle");
+			float	a = brush->owner->FloatForKey("angle");
 			float	s, c;
 			//FIXME: support full rotation matrix
 			bool matrix = false;
@@ -1460,7 +1413,7 @@ int Brush_TransformModel(brush_t *brush, idTriList *tris, idMatList *mats) {
 				c = cos( DEG2RAD(a) );
 			}
 			idMat3 mat;
-			if (GetMatrixForKey(brush->owner, "rotation", mat)) {
+			if (brush->owner->GetMatrixForKey("rotation", mat)) {
 				matrix = true;
 			}
 
@@ -1498,8 +1451,6 @@ int Brush_TransformModel(brush_t *brush, idTriList *tris, idMatList *mats) {
 	return ret;
 }
 
-
-#define	MAX_TRI_SURFACES	16384
 int Brush_ToTris(brush_t *brush, idTriList *tris, idMatList *mats, bool models, bool bmodel) {
 	int i, j;
 	srfTriangles_t	*tri;
@@ -1650,7 +1601,21 @@ void Select_ToOBJ() {
 			Brush_ToTris(b, &tris, &mats, true, false);
 		}
 
-		Tris_ToOBJ(dlgFile.GetPathName().GetBuffer(0), &tris, &mats);
+		char objFilePath[MAX_PATH];
+		char mtlFilePath[MAX_PATH];
+
+		sprintf(objFilePath, "%s", dlgFile.GetPathName().GetBuffer(0));
+		StripExtension(objFilePath);
+		sprintf(mtlFilePath, "%s.mtl", objFilePath);
+		sprintf(objFilePath, "%s", dlgFile.GetPathName().GetBuffer(0));
+
+		idFile *objFile = fileSystem->OpenExplicitFileWrite( objFilePath );
+		idFile *mtlFile = fileSystem->OpenExplicitFileWrite( mtlFilePath );
+
+		Tris_ToOBJ(&tris, &mats, objFile, mtlFile);
+
+		fileSystem->CloseFile( objFile );
+		fileSystem->CloseFile( mtlFile );
 
 		for( i = 0; i < tris.Num(); i++ ) {
 			R_FreeStaticTriSurf( tris[i] );
@@ -1951,7 +1916,7 @@ void CCamWnd::ToggleSoundMode() {
 	UpdateCaption();
 
 	for ( entity_t *ent = entities.next ; ent != &entities ; ent = ent->next ) {
-		Entity_UpdateSoundEmitter( ent );
+		ent->UpdateSoundEmitter();
 	}
 }
 
@@ -1981,71 +1946,6 @@ void CCamWnd::MarkWorldDirty() {
 
 
 /*
-=========================
-CCamWnd::DrawEntityData
-
-  Draws entity data ( experimental )
-=========================
-*/
-extern void glBox(idVec4 &color, idVec3 &point, float size);
-
-void CCamWnd::DrawEntityData() {
-
-	qglMatrixMode( GL_MODELVIEW );
-	qglLoadIdentity();
-	qglMatrixMode( GL_PROJECTION );
-	qglLoadIdentity();
-
-	SetProjectionMatrix();
-
-	qglRotatef(-90, 1, 0, 0);	// put Z going up
-	qglRotatef(90, 0, 0, 1);	// put Z going up
-	qglRotatef(m_Camera.angles[0], 0, 1, 0);
-	qglRotatef(-m_Camera.angles[1], 0, 0, 1);
-	qglTranslatef(-m_Camera.origin[0], -m_Camera.origin[1], -m_Camera.origin[2]);
-
-	Cam_BuildMatrix();
-
-	if (!(entityMode || selectMode)) {
-		return;
-	}
-
-	qglDisable(GL_BLEND);
-	qglDisable(GL_DEPTH_TEST);
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	globalImages->BindNull();
-	idVec3 color(0, 1, 0);
-	qglColor3fv( color.ToFloatPtr() );
-
-	brush_t *brushList = &active_brushes;
-	int pass = 0;
-	while (brushList) {
-		for (brush_t *brush = brushList->next; brush != brushList; brush = brush->next) {
-
-			if (CullBrush(brush, true)) {
-				continue;
-			}
-
-			if (FilterBrush(brush)) {
-				continue;
-			}
-
-			if ((pass == 1 && selectMode) || (entityMode && pass == 0 && brush->owner->lightDef >= 0)) {
-				Brush_DrawXY(brush, 0, true, true);
-			}
-
-		}
-		brushList = (brushList == &active_brushes) ? &selected_brushes : NULL;
-		color.x = 1;
-		color.y = 0;
-		pass++;
-		qglColor3fv( color.ToFloatPtr() );
-	}
-
-}
-
-
-/*
  =======================================================================================================================
     Cam_Render
 
@@ -2062,19 +1962,19 @@ void CCamWnd::Cam_Render() {
 		return;					// not valid yet
 	}
 
-	if (!qwglMakeCurrent(dc.m_hDC, win32.hGLRC)) {
+	if (!wglMakeCurrent(dc.m_hDC, win32.hGLRC)) {
 		common->Printf("ERROR: wglMakeCurrent failed..\n ");
 		common->Printf("Please restart " EDITOR_WINDOWTEXT " if the camera view is not working\n");
 		return;
 	}
 
 	// save the editor state
-	//qglPushAttrib( GL_ALL_ATTRIB_BITS );
-	qglClearColor( 0.1f, 0.1f, 0.1f, 0.0f );
-	qglScissor( 0, 0, m_Camera.width, m_Camera.height );
-	qglClear( GL_COLOR_BUFFER_BIT );
+	//glPushAttrib( GL_ALL_ATTRIB_BITS );
+	glClearColor( 0.1f, 0.1f, 0.1f, 0.0f );
+	glScissor( 0, 0, m_Camera.width, m_Camera.height );
+	glClear( GL_COLOR_BUFFER_BIT );
 
-	//	qwglSwapBuffers(dc.m_hDC);
+	//	wglSwapBuffers(dc.m_hDC);
 
 	// create the model, using explicit normals
 	if ( rebuildMode && worldDirty ) {
@@ -2107,20 +2007,16 @@ void CCamWnd::Cam_Render() {
 	renderSystem->EndFrame( &frontEnd, &backEnd );
 //common->Printf( "front:%i back:%i\n", frontEnd, backEnd );
 
-	//qglPopAttrib();
-	//DrawEntityData();
-
-	//qwglSwapBuffers(dc.m_hDC);
+	//wglSwapBuffers(dc.m_hDC);
 	// get back to the editor state
-	qglMatrixMode( GL_MODELVIEW );
-	qglLoadIdentity();
+	GL_ModelViewMatrix.LoadIdentity();
 	Cam_BuildMatrix();
 }
 
 
 void CCamWnd::OnTimer(UINT nIDEvent) 
 {
-	if (animationMode || nIDEvent == 1) {
+	if ((renderMode && animationMode) || nIDEvent == 1) {
 		Sys_UpdateWindows(W_CAMERA);
 	}
 	if (nIDEvent == 1) {
@@ -2138,7 +2034,7 @@ void CCamWnd::UpdateCameraView() {
 		brush_t *b = selected_brushes.next;
 		if (b->owner->eclass->nShowFlags & ECLASS_CAMERAVIEW) {
 			// find the entity that targets this
-			const char *name = ValueForKey(b->owner, "name");
+			const char *name = b->owner->ValueForKey("name");
 			entity_t *ent = FindEntity("target", name);
 			if (ent) {
 				if (!saveValid) {

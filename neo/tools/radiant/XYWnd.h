@@ -44,9 +44,8 @@ const int SCALE_X = 0x01;
 const int SCALE_Y = 0x02;
 const int SCALE_Z = 0x04;
 
-bool FilterBrush(brush_t *pb);
+bool FilterBrush(const brush_t *pb);
 
-typedef void (PFNPathCallback)(bool, int);
 // as i didn't really encapsulate anything this
 // should really be a struct..
 class CClipPoint
@@ -141,9 +140,6 @@ public:
   bool ScaleMode();
   void SetScaleMode(bool bMode);
 
-  bool PathMode();
-  void DropPathPoint(UINT nFlags, CPoint point);
-
   bool PointMode();
   void AddPointPoint(UINT nFlags, idVec3* pVec);
   void SetPointMode(bool b);
@@ -211,12 +207,19 @@ protected:
 
   CMenu m_mnuDrop;
   int m_nViewType;
+  const char* m_sViewName;
 
   unsigned int m_nTimerID;
   int m_nScrollFlags;
   CPoint m_ptDrag;
   CPoint m_ptDragAdj;
   CPoint m_ptDragTotal;
+
+  void DrawOrientedText(const char* text, const idVec3& pos, const idVec4& color);
+  void DrawOrientedText(const char* text, const idVec3& pos, const idVec3& color);
+
+  void DrawOrigin(const idVec3& position, float originX, float originY, const char* axisX, const char* axisY, const idVec3& color);
+  void DrawDimension(const idVec3& position, float value, const char* label, const idVec3& color);
 
 	void OriginalButtonUp(UINT nFlags, CPoint point);
 	void OriginalButtonDown(UINT nFlags, CPoint point);

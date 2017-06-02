@@ -30,7 +30,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "qe3.h"
-
+#include "../../renderer/ImmediateMode.h"
+void drawText(const char* text, float scale, const idVec3& pos, const idVec3& color, int viewType);
 #define PAGEFLIPS	2
 
 z_t z;
@@ -247,47 +248,51 @@ void Z_DrawGrid(void) {
 	ze = 64 * ceil(ze / 64);
 
 	// draw major blocks
-	qglColor3fv( g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR].ToFloatPtr() );
+  fhImmediateMode im;
+	im.Color3fv( g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR].ToFloatPtr() );
 
-	qglBegin(GL_LINES);
+	im.Begin(GL_LINES);
 
-	qglVertex2f(0, zb);
-	qglVertex2f(0, ze);
+	im.Vertex2f(0, zb);
+	im.Vertex2f(0, ze);
 
 	for (zz = zb; zz < ze; zz += 64) {
-		qglVertex2f(-w, zz);
-		qglVertex2f(w, zz);
+		im.Vertex2f(-w, zz);
+		im.Vertex2f(w, zz);
 	}
 
-	qglEnd();
+	im.End();
 
 	// draw minor blocks
 	if ( g_qeglobals.d_showgrid &&
 		g_qeglobals.d_gridsize * z.scale >= 4 &&
 		!g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR].Compare( g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK] ) ) {
 
-		qglColor3fv(g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR].ToFloatPtr());
+		im.Color3fv(g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR].ToFloatPtr());
 
-		qglBegin(GL_LINES);
+		im.Begin(GL_LINES);
 		for (zz = zb; zz < ze; zz += g_qeglobals.d_gridsize) {
 			if (!((int)zz & 63)) {
 				continue;
 			}
 
-			qglVertex2f(-w, zz);
-			qglVertex2f(w, zz);
+			im.Vertex2f(-w, zz);
+			im.Vertex2f(w, zz);
 		}
 
-		qglEnd();
+		im.End();
 	}
 
 	// draw coordinate text if needed
-	qglColor3fv(g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT].ToFloatPtr());
+//	im.Color3fv(.ToFloatPtr());
 
 	for (zz = zb; zz < ze; zz += 64) {
-		qglRasterPos2f(-w + 1, zz);
+    
+//		glRasterPos2f(-w + 1, zz);
 		sprintf(text, "%i", (int)zz);
-		qglCallLists(strlen(text), GL_UNSIGNED_BYTE, text);
+
+    drawText(text, 0.8f, idVec3(-w +1, zz, 0), g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT], XY);
+//		glCallLists(strlen(text), GL_UNSIGNED_BYTE, text);
 	}
 }
 
@@ -305,18 +310,19 @@ void ZDrawCameraIcon(void) {
 	x = 0;
 	y = g_pParentWnd->GetCamera()->Camera().origin[2];
 
-	qglColor3f(0.0, 0.0, 1.0);
-	qglBegin(GL_LINE_STRIP);
-	qglVertex3f(x - xCam, y, 0);
-	qglVertex3f(x, y + CAM_GIZMO, 0);
-	qglVertex3f(x + xCam, y, 0);
-	qglVertex3f(x, y - CAM_GIZMO, 0);
-	qglVertex3f(x - xCam, y, 0);
-	qglVertex3f(x + xCam, y, 0);
-	qglVertex3f(x + xCam, y - CAM_HEIGHT, 0);
-	qglVertex3f(x - xCam, y - CAM_HEIGHT, 0);
-	qglVertex3f(x - xCam, y, 0);
-	qglEnd();
+  fhImmediateMode im;
+	im.Color3f(0.0, 0.0, 1.0);
+	im.Begin(GL_LINE_STRIP);
+	im.Vertex3f(x - xCam, y, 0);
+	im.Vertex3f(x, y + CAM_GIZMO, 0);
+	im.Vertex3f(x + xCam, y, 0);
+	im.Vertex3f(x, y - CAM_GIZMO, 0);
+	im.Vertex3f(x - xCam, y, 0);
+	im.Vertex3f(x + xCam, y, 0);
+	im.Vertex3f(x + xCam, y - CAM_HEIGHT, 0);
+	im.Vertex3f(x - xCam, y - CAM_HEIGHT, 0);
+	im.Vertex3f(x - xCam, y, 0);
+	im.End();
 }
 
 void ZDrawZClip()
@@ -339,8 +345,7 @@ GLbitfield	glbitClear = GL_COLOR_BUFFER_BIT;	// HACK
  =======================================================================================================================
  */
 void Z_Draw(void) {
-	brush_t		*brush;
-	float		w, h;
+	brush_t		*brush;	
 	float		top, bottom;
 	idVec3		org_top, org_bottom, dir_up, dir_down;
 	int			xCam = z.width / 3;
@@ -350,10 +355,10 @@ void Z_Draw(void) {
 	}
 
 	// clear
-	qglViewport(0, 0, z.width, z.height);
-	qglScissor(0, 0, z.width, z.height);
+	glViewport(0, 0, z.width, z.height);
+	glScissor(0, 0, z.width, z.height);
 
-	qglClearColor
+	glClearColor
 	(
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][0],
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][1],
@@ -366,32 +371,32 @@ void Z_Draw(void) {
 	 * When not using hw acceleration, gl will fault if we clear the depth buffer bit
 	 * on the first pass. The hack fix is to set the GL_DEPTH_BUFFER_BIT only after
 	 * Z_Draw() has been called once. Yeah, right. £
-	 * qglClear(glbitClear);
+	 * glClear(glbitClear);
 	 */
-	qglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 	//
 	// glbitClear |= GL_DEPTH_BUFFER_BIT;
-	// qglClear(GL_DEPTH_BUFFER_BIT);
+	// glClear(GL_DEPTH_BUFFER_BIT);
 	//
-	qglMatrixMode(GL_PROJECTION);
-	qglLoadIdentity();
+	const float w = z.width / 2 / z.scale;
+	const float h = z.height / 2 / z.scale;
 
-	w = z.width / 2 / z.scale;
-	h = z.height / 2 / z.scale;
-	qglOrtho(-w, w, z.origin[2] - h, z.origin[2] + h, -8, 8);
+  GL_ProjectionMatrix.LoadIdentity();
+  GL_ProjectionMatrix.Ortho(-w, w, z.origin[2] - h, z.origin[2] + h, -8, 8);
 
 	globalImages->BindNull();
-	qglDisable(GL_DEPTH_TEST);
-	qglDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_BLEND);
 
 	// now draw the grid
 	Z_DrawGrid();
 
 	// draw stuff
-	qglDisable(GL_CULL_FACE);
+	glDisable(GL_CULL_FACE);
 
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glLineWidth(1.0f);
 
 	globalImages->BindNull();
 
@@ -430,24 +435,26 @@ void Z_Draw(void) {
 		bottom = org_bottom[2] + bottom;
 
 		//q = declManager->FindMaterial(brush->brush_faces->texdef.name);
-		qglColor3f(brush->owner->eclass->color.x, brush->owner->eclass->color.y, brush->owner->eclass->color.z);
-		qglBegin(GL_QUADS);
-		qglVertex2f(-xCam, bottom);
-		qglVertex2f(xCam, bottom);
-		qglVertex2f(xCam, top);
-		qglVertex2f(-xCam, top);
-		qglEnd();
-
-		qglColor3f(1, 1, 1);
-		qglBegin(GL_LINE_LOOP);
-		qglVertex2f(-xCam, bottom);
-		qglVertex2f(xCam, bottom);
-		qglVertex2f(xCam, top);
-		qglVertex2f(-xCam, top);
-		qglEnd();
+    fhImmediateMode im;
+		im.Color3f(brush->owner->eclass->color.x, brush->owner->eclass->color.y, brush->owner->eclass->color.z);
+		im.Begin(GL_QUADS);
+		im.Vertex2f(-xCam, bottom);
+		im.Vertex2f(xCam, bottom);
+		im.Vertex2f(xCam, top);
+		im.Vertex2f(-xCam, top);
+		im.End();
+    
+		im.Color3f(1, 1, 1);
+		im.Begin(GL_LINE_LOOP);
+		im.Vertex2f(-xCam, bottom);
+		im.Vertex2f(xCam, bottom);
+		im.Vertex2f(xCam, top);
+		im.Vertex2f(-xCam, top);
+		im.End();
 	}
 
 	// now draw selected brushes
+  fhImmediateMode im;
 	for (brush = selected_brushes.next; brush != &selected_brushes; brush = brush->next) {
 		if
 		(
@@ -464,29 +471,29 @@ void Z_Draw(void) {
 					bottom = org_bottom[2] + bottom;
 
 					//q = declManager->FindMaterial(brush->brush_faces->texdef.name);
-					qglColor3f(brush->owner->eclass->color.x, brush->owner->eclass->color.y, brush->owner->eclass->color.z);
-					qglBegin(GL_QUADS);
-					qglVertex2f(-xCam, bottom);
-					qglVertex2f(xCam, bottom);
-					qglVertex2f(xCam, top);
-					qglVertex2f(-xCam, top);
-					qglEnd();
+					im.Color3f(brush->owner->eclass->color.x, brush->owner->eclass->color.y, brush->owner->eclass->color.z);
+					im.Begin(GL_QUADS);
+					im.Vertex2f(-xCam, bottom);
+					im.Vertex2f(xCam, bottom);
+					im.Vertex2f(xCam, top);
+					im.Vertex2f(-xCam, top);
+					im.End();
 				}
 			}
 		}
 
-		qglColor3fv(g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES].ToFloatPtr());
-		qglBegin(GL_LINE_LOOP);
-		qglVertex2f(-xCam, brush->mins[2]);
-		qglVertex2f(xCam, brush->mins[2]);
-		qglVertex2f(xCam, brush->maxs[2]);
-		qglVertex2f(-xCam, brush->maxs[2]);
-		qglEnd();
+		im.Color3fv(g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES].ToFloatPtr());
+		im.Begin(GL_LINE_LOOP);
+		im.Vertex2f(-xCam, brush->mins[2]);
+		im.Vertex2f(xCam, brush->mins[2]);
+		im.Vertex2f(xCam, brush->maxs[2]);
+		im.Vertex2f(-xCam, brush->maxs[2]);
+		im.End();
 	}
 
 	ZDrawCameraIcon();
 	ZDrawZClip();
 
-	qglFinish();
+	glFinish();
 	QE_CheckOpenGLForErrors();
 }

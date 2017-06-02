@@ -35,12 +35,16 @@ If you have questions concerning this license or the applicable additional terms
 #include "io.h"
 
 #include "../../renderer/tr_local.h"
+#include "../../renderer/ImmediateMode.h"
+void drawText(const char* text, float scale, const idVec3& pos, const idVec3& color, int viewType);
 
 #ifdef _DEBUG
 	#define new DEBUG_NEW
 	#undef THIS_FILE
 static char THIS_FILE[] = __FILE__;
 #endif
+
+static const int labelHeight = FONT_HEIGHT + 2;
 
 /*
  =======================================================================================================================
@@ -130,7 +134,7 @@ int CNewTexWnd::OnCreate(LPCREATESTRUCT lpCreateStruct) {
 		return -1;
 	}
 
-	ShowScrollBar(SB_VERT, g_PrefsDlg.m_bTextureScrollbar);
+	ShowScrollBar(SB_VERT, true);
 	m_bNeedRange = true;
 
 	hdcTexture = GetDC();
@@ -165,7 +169,7 @@ void CNewTexWnd::OnParentNotify(UINT message, LPARAM lParam) {
  =======================================================================================================================
  */
 void CNewTexWnd::UpdatePrefs() {
-	ShowScrollBar(SB_VERT, g_PrefsDlg.m_bTextureScrollbar);
+	ShowScrollBar(SB_VERT, true);
 	m_bNeedRange = true;
 	Invalidate();
 	UpdateWindow();
@@ -225,7 +229,7 @@ const idMaterial *CNewTexWnd::NextPos() {
 	if (current.x + width > rectClient.Width() - 8 && currentRow) {
 		// go to the next row unless the texture is the first on the row
 		current.x = 8;
-		current.y -= currentRow + FONT_HEIGHT + 4;
+		current.y -= currentRow + labelHeight + 4;
 		currentRow = 0;
 	}
 
@@ -253,27 +257,28 @@ void CNewTexWnd::OnPaint() {
 	int nOld = g_qeglobals.d_texturewin.m_nTotalHeight;
 
 	//hdcTexture = GetDC();
-	if (!qwglMakeCurrent(dc.GetSafeHdc(), win32.hGLRC)) {
+	if (!wglMakeCurrent(dc.GetSafeHdc(), win32.hGLRC)) {
 		common->Printf("ERROR: wglMakeCurrent failed..\n ");
 	}
 	else {
 		const char	*name;
-		qglClearColor
+		glClearColor
 		(
 			g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][0],
 			g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][1],
 			g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][2],
 			0
 		);
-		qglViewport(0, 0, rectClient.Width(), rectClient.Height());
-		qglScissor(0, 0, rectClient.Width(), rectClient.Height());
-		qglMatrixMode(GL_PROJECTION);
-		qglLoadIdentity();
-		qglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		qglDisable(GL_DEPTH_TEST);
-		qglDisable(GL_BLEND);
-		qglOrtho(0, rectClient.Width(), origin.y - rectClient.Height(), origin.y, -100, 100);
-		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		glViewport(0, 0, rectClient.Width(), rectClient.Height());
+		glScissor(0, 0, rectClient.Width(), rectClient.Height());
+    GL_ProjectionMatrix.LoadIdentity();
+    GL_ProjectionMatrix.Ortho(0, rectClient.Width(), origin.y - rectClient.Height(), origin.y, -100, 100);    
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_BLEND);
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    globalImages->BindNull();
 
 		// init stuff
 		current.x = 8;
@@ -290,55 +295,54 @@ void CNewTexWnd::OnPaint() {
 			int height = mat->GetEditorImage()->uploadHeight * ((float)g_PrefsDlg.m_nTextureScale / 100);
 
 			// Is this texture visible?
-			if ((draw.y - height - FONT_HEIGHT < origin.y) && (draw.y > origin.y - rectClient.Height())) {
+			if ((draw.y - height - labelHeight < origin.y) && (draw.y > origin.y - rectClient.Height())) {
 				// if in use, draw a background
-				qglLineWidth(1);
-				qglColor3f(1, 1, 1);
-				globalImages->BindNull();
-				qglBegin(GL_LINE_LOOP);
-				qglVertex2f(draw.x - 1, draw.y + 1 - FONT_HEIGHT);
-				qglVertex2f(draw.x - 1, draw.y - height - 1 - FONT_HEIGHT);
-				qglVertex2f(draw.x + 1 + width, draw.y - height - 1 - FONT_HEIGHT);
-				qglVertex2f(draw.x + 1 + width, draw.y + 1 - FONT_HEIGHT);
-				qglEnd();
+				glLineWidth(1);
+        fhImmediateMode im;
+				im.Color3f(1, 1, 1);				
+				im.Begin(GL_LINE_LOOP);
+				im.Vertex2f(draw.x - 1, draw.y + 1 - labelHeight);
+				im.Vertex2f(draw.x - 1, draw.y - height - 1 - labelHeight);
+				im.Vertex2f(draw.x + 1 + width, draw.y - height - 1 - labelHeight);
+				im.Vertex2f(draw.x + 1 + width, draw.y + 1 - labelHeight);
+				im.End();
 
 				// Draw the texture
-				float	fScale = (g_PrefsDlg.m_bHiColorTextures == TRUE) ? ((float)g_PrefsDlg.m_nTextureScale / 100) : 1.0;
-
-				mat->GetEditorImage()->Bind();
-				QE_CheckOpenGLForErrors();
-				qglColor3f(1, 1, 1);
-				qglBegin(GL_QUADS);
-				qglTexCoord2f(0, 0);
-				qglVertex2f(draw.x, draw.y - FONT_HEIGHT);
-				qglTexCoord2f(1, 0);
-				qglVertex2f(draw.x + width, draw.y - FONT_HEIGHT);
-				qglTexCoord2f(1, 1);
-				qglVertex2f(draw.x + width, draw.y - FONT_HEIGHT - height);
-				qglTexCoord2f(0, 1);
-				qglVertex2f(draw.x, draw.y - FONT_HEIGHT - height);
-				qglEnd();
+				im.Begin(GL_QUADS);
+        im.SetTexture(mat->GetEditorImage());
+				im.TexCoord2f(0, 0);
+				im.Vertex2f(draw.x, draw.y - labelHeight);
+				im.TexCoord2f(1, 0);
+				im.Vertex2f(draw.x + width, draw.y - labelHeight);
+				im.TexCoord2f(1, 1);
+				im.Vertex2f(draw.x + width, draw.y - labelHeight - height);
+				im.TexCoord2f(0, 1);
+				im.Vertex2f(draw.x, draw.y - labelHeight - height);
+				im.End();
 
 				// draw the selection border
 				if ( !idStr::Icmp(g_qeglobals.d_texturewin.texdef.name, mat->GetName()) ) {
-					qglLineWidth(3);
-					qglColor3f(1, 0, 0);
+					//TODO(johl): linewidth>1 is deprecated. WTF?
+					glLineWidth( 1 /*3*/);
+					im.SetTexture(nullptr);
+					im.Color3f(1, 0, 0);
 					globalImages->BindNull();
 
-					qglBegin(GL_LINE_LOOP);
-					qglVertex2f(draw.x - 4, draw.y - FONT_HEIGHT + 4);
-					qglVertex2f(draw.x - 4, draw.y - FONT_HEIGHT - height - 4);
-					qglVertex2f(draw.x + 4 + width, draw.y - FONT_HEIGHT - height - 4);
-					qglVertex2f(draw.x + 4 + width, draw.y - FONT_HEIGHT + 4);
-					qglEnd();
+					im.Begin(GL_LINE_LOOP);
+					im.Vertex2f(draw.x - 4, draw.y - labelHeight + 4);
+					im.Vertex2f(draw.x - 4, draw.y - labelHeight - height - 4);
+					im.Vertex2f(draw.x + 4 + width, draw.y - labelHeight - height - 4);
+					im.Vertex2f(draw.x + 4 + width, draw.y - labelHeight + 4);
+					im.End();
 
-					qglLineWidth(1);
+					glLineWidth(1);
 				}
 
+  
 				// draw the texture name
-				globalImages->BindNull();
-				qglColor3f(1, 1, 1);
-				qglRasterPos2f(draw.x, draw.y - FONT_HEIGHT + 2);
+				//globalImages->BindNull();
+				//glColor3f(1, 1, 1);
+				//glRasterPos2f(draw.x, draw.y - labelHeight + 2);
 
 				// don't draw the directory name
 				for (name = mat->GetName(); *name && *name != '/' && *name != '\\'; name++) {
@@ -351,8 +355,9 @@ void CNewTexWnd::OnPaint() {
 				else {
 					name++;
 				}
-				qglCallLists(strlen(name), GL_UNSIGNED_BYTE, name);
-				//qglCallLists(va("%s -- %d, %d" strlen(name), GL_UNSIGNED_BYTE, name);
+        drawText(name, 0.8f, idVec3(draw.x, draw.y - labelHeight + 2, 0), idVec3(1,1,1), XY);
+				//glCallLists(strlen(name), GL_UNSIGNED_BYTE, name);
+	
 			} 
 		}
 
@@ -360,12 +365,12 @@ void CNewTexWnd::OnPaint() {
 
 		// reset the current texture
 		globalImages->BindNull();
-		qglFinish();
-		qwglSwapBuffers(dc.GetSafeHdc());
+		glFinish();
+		wglSwapBuffers(dc.GetSafeHdc());
 		TRACE("Texture Paint\n");
 	}
 
-	if (g_PrefsDlg.m_bTextureScrollbar && (m_bNeedRange || g_qeglobals.d_texturewin.m_nTotalHeight != nOld)) {
+	if (m_bNeedRange || g_qeglobals.d_texturewin.m_nTotalHeight != nOld) {
 		m_bNeedRange = false;
 		SetScrollRange(SB_VERT, 0, g_qeglobals.d_texturewin.m_nTotalHeight, TRUE);
 	}
@@ -469,8 +474,8 @@ const idMaterial *CNewTexWnd::getMaterialAtPoint(CPoint point) {
 
 		int width = mat->GetEditorImage()->uploadWidth * ((float)g_PrefsDlg.m_nTextureScale / 100);
 		int height = mat->GetEditorImage()->uploadHeight * ((float)g_PrefsDlg.m_nTextureScale / 100);
-		//if (point.x > draw.x && point.x - draw.x < width && my < draw.y && my + draw.y < height + FONT_HEIGHT) {
-		if (point.x > draw.x && point.x - draw.x < width && my < draw.y &&  draw.y - my < height + FONT_HEIGHT) {
+		//if (point.x > draw.x && point.x - draw.x < width && my < draw.y && my + draw.y < height + labelHeight) {
+		if (point.x > draw.x && point.x - draw.x < width && my < draw.y &&  draw.y - my < height + labelHeight) {
 			return mat;
 		}
 	
@@ -601,10 +606,8 @@ void CNewTexWnd::OnMouseMove(UINT nFlags, CPoint point) {
 				CPoint screen = cursor;
 				ClientToScreen(&screen);
 				SetCursorPos(screen.x, screen.y);
-				if (g_PrefsDlg.m_bTextureScrollbar) {
-					SetScrollPos(SB_VERT, abs(origin.y));
-				}
-
+  			SetScrollPos(SB_VERT, abs(origin.y));
+	
 				InvalidateRect(NULL, false);
 				UpdateWindow();
 			}
@@ -612,13 +615,6 @@ void CNewTexWnd::OnMouseMove(UINT nFlags, CPoint point) {
 
 		return;
 	}
-}
-
-/*
- =======================================================================================================================
- =======================================================================================================================
- */
-void CNewTexWnd::LoadMaterials() {
 }
 
 
@@ -667,10 +663,6 @@ void Texture_SetTexture(texdef_t *texdef, brushprimit_texdef_t	*brushprimit_texd
 
 const idMaterial *Texture_LoadLight(const char *name) {
 	return declManager->FindMaterial(name);
-}
-
-
-void Texture_ClearInuse(void) {
 }
 
 void Texture_ShowAll(void) {
@@ -736,10 +728,6 @@ void Texture_ShowInuse(void) {
 	g_Inspectors->SetWindowText("Textures (in use)");
 }
 
-void Texture_Cleanup(CStringList *pList) {
-}
-
-int				texture_mode = GL_LINEAR_MIPMAP_LINEAR;
 bool texture_showinuse = true;
 
 
@@ -800,7 +788,7 @@ void Texture_SetMode(int iMenu) {
 	CheckMenuItem(hMenu, iMenu, MF_BYCOMMAND | MF_CHECKED);
 
 	g_qeglobals.d_savedinfo.iTexMenu = iMenu;
-	texture_mode = iMode;
+
 
 	if (!texturing && iMenu == ID_TEXTURES_WIREFRAME) {
 		g_pParentWnd->GetCamera()->Camera().draw_mode = cd_wire;
@@ -849,8 +837,8 @@ void CNewTexWnd::EnsureTextureIsVisible(const char *name) {
 				return;
 			}
 
-			if (current.y - height - 2 * FONT_HEIGHT < origin.y - rectClient.Height()) {
-				origin.y = current.y - height - 2 * FONT_HEIGHT + rectClient.Height();
+			if (current.y - height - 2 * labelHeight < origin.y - rectClient.Height()) {
+				origin.y = current.y - height - 2 * labelHeight + rectClient.Height();
 				Sys_UpdateWindows(W_TEXTURE);
 				return;
 			}

@@ -294,7 +294,7 @@ void idItem::Spawn( void ) {
 		if ( !ent ) {
 			gameLocal.Error( "Item couldn't find owner '%s'", giveTo.c_str() );
 		}
-		PostEventMS( &EV_Touch, 0, ent, NULL );
+		PostEventMS( &EV_Touch, 0, ent, 0 );
 	}
 
 	if ( spawnArgs.GetBool( "spin" ) || gameLocal.isMultiplayer ) {
@@ -474,11 +474,12 @@ bool idItem::ClientReceiveEvent( int event, int time, const idBitMsg &msg ) {
 			Event_RespawnFx();
 			return true;
 		}
-		default: {
-			return idEntity::ClientReceiveEvent( event, time, msg );
-		}
+    default: {
+      break;
+    }
 	}
-	return false;
+
+  return idEntity::ClientReceiveEvent( event, time, msg );
 }
 
 /*

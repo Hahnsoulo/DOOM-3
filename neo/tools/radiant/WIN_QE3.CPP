@@ -32,14 +32,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "qe3.h"
 #include "mru.h"
 
-extern CEdit				*g_pEdit;
-
-int		screen_width;
-int		screen_height;
-bool	have_quit;
-
-int		update_bits;
-
 /*
  =======================================================================================================================
  =======================================================================================================================
@@ -118,54 +110,8 @@ void Sys_Beep(void) {
  =======================================================================================================================
  =======================================================================================================================
  */
-char *TranslateString(char *buf) {
-	static char buf2[32768];
-	int			i, l;
-	char		*out;
-
-	l = strlen(buf);
-	out = buf2;
-	for (i = 0; i < l; i++) {
-		if (buf[i] == '\n') {
-			*out++ = '\r';
-			*out++ = '\n';
-		}
-		else {
-			*out++ = buf[i];
-		}
-	}
-
-	*out++ = 0;
-
-	return buf2;
-}
-
-/*
- =======================================================================================================================
- =======================================================================================================================
- */
 double Sys_DoubleTime(void) {
 	return clock() / 1000.0;
-}
-
-/*
- =======================================================================================================================
- =======================================================================================================================
- */
-void PrintPixels(HDC hDC) {
-	int						i;
-	PIXELFORMATDESCRIPTOR	p[64];
-
-	printf("### flags color layer\n");
-	for (i = 1; i < 64; i++) {
-		if (!DescribePixelFormat(hDC, i, sizeof(p[0]), &p[i])) {
-			break;
-		}
-
-		printf("%3i %5i %5i %5i\n", i, p[i].dwFlags, p[i].cColorBits, p[i].bReserved);
-	}
-
-	printf("%i modes\n", i - 1);
 }
 
 /*
@@ -251,7 +197,7 @@ void Error(char *error, ...) {
 
 	err = GetLastError();
 
-	int i = qglGetError();
+	int i = glGetError();
 
 	va_start(argptr, error);
 	vsprintf(text, error, argptr);
@@ -285,7 +231,7 @@ void Warning(char *error, ...) {
 
 	err = GetLastError();
 
-	int i = qglGetError();
+	int i = glGetError();
 
 	va_start(argptr, error);
 	vsprintf(text, error, argptr);
@@ -329,9 +275,9 @@ static HANDLE		hf;						/* file handle */
  */
 void OpenDialog(void) {
 	/* Obtain the system directory name and store it in szDirName. */
-	strcpy(szDirName, ValueForKey(g_qeglobals.d_project_entity, "mapspath"));
+	strcpy(szDirName, g_qeglobals.d_project_entity->ValueForKey("mapspath"));
 	if (strlen(szDirName) == 0) {
-		strcpy(szDirName, ValueForKey(g_qeglobals.d_project_entity, "basepath"));
+		strcpy(szDirName, g_qeglobals.d_project_entity->ValueForKey("basepath"));
 		strcat(szDirName, "\\maps");
 	}
 
@@ -378,7 +324,7 @@ void OpenDialog(void) {
  */
 void ProjectDialog(void) {
 	/* Obtain the system directory name and store it in szDirName. */
-	strcpy(szDirName, ValueForKey(g_qeglobals.d_project_entity, "basepath"));
+	strcpy(szDirName, g_qeglobals.d_project_entity->ValueForKey("basepath"));
 
 	/* Place the terminating null character in the szFile. */
 	szFile[0] = '\0';
@@ -416,7 +362,7 @@ extern void AddSlash(CString &strPath);
  =======================================================================================================================
  */
 void SaveAsDialog(bool bRegion) {
-	strcpy(szDirName, ValueForKey(g_qeglobals.d_project_entity, "basepath"));
+	strcpy(szDirName, g_qeglobals.d_project_entity->ValueForKey("basepath"));
 
 	CString strPath = szDirName;
 	AddSlash(strPath);

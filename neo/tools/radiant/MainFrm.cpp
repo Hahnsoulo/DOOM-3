@@ -73,7 +73,6 @@ CString			g_strAppPath;						// holds the full path of the executable
 CMainFrame		*g_pParentWnd = NULL;				// used to precast to CMainFrame
 CPrefsDlg		g_Preferences;						// global prefs instance
 CPrefsDlg		&g_PrefsDlg = g_Preferences;		// reference used throughout
-int				g_nUpdateBits = 0;					// window update flags
 bool			g_bScreenUpdates = true;			// whether window painting is active, used in a few places
 
 //
@@ -354,6 +353,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_WM_CLOSE()
 	ON_WM_KEYDOWN()
 	ON_WM_SIZE()
+  ON_WM_ERASEBKGND()
 	ON_COMMAND(ID_VIEW_CAMERATOGGLE, ToggleCamera)
 	ON_COMMAND(ID_FILE_CLOSE, OnFileClose)
 	ON_COMMAND(ID_FILE_EXIT, OnFileExit)
@@ -692,11 +692,6 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_COMMAND_RANGE(IDMRU, IDMRU_END, OnMru)
 	ON_COMMAND_RANGE(ID_VIEW_NEAREST, ID_TEXTURES_FLATSHADE, OnViewNearest)
 	ON_COMMAND_RANGE(ID_GRID_POINT0625, ID_GRID_64, OnGrid1)
-#if _MSC_VER < 1300
-	ON_REGISTERED_MESSAGE(g_msgBSPDone, OnBSPDone) 
-	ON_REGISTERED_MESSAGE(g_msgBSPStatus, OnBSPStatus)
-	ON_MESSAGE(WM_DISPLAYCHANGE, OnDisplayChange)
-#endif
 	ON_COMMAND(ID_AUTOCAULK, OnAutocaulk)
 	ON_UPDATE_COMMAND_UI(ID_AUTOCAULK, OnUpdateAutocaulk)
 	ON_COMMAND(ID_SELECT_ALLTARGETS, OnSelectAlltargets)
@@ -716,6 +711,26 @@ static UINT indicators[] = {
  */
 void CMainFrame::OnDisplayChange(UINT wParam, long lParam) {
 	int n = wParam;
+}
+
+BOOL CMainFrame::OnEraseBkgnd(CDC* pDC) {
+  // Set brush to desired background color
+  int r = static_cast<int>(g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][0] * 255.0f);
+  int g = static_cast<int>(g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][1] * 255.0f);
+  int b = static_cast<int>(g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][2] * 255.0f);
+
+  CBrush backBrush(RGB(r, g, b));
+
+  // Save old brush
+  CBrush* pOldBrush = pDC->SelectObject(&backBrush);
+
+  CRect rect;
+  pDC->GetClipBox(&rect);     // Erase the area needed
+
+  pDC->PatBlt(rect.left, rect.top, rect.Width(), rect.Height(),
+    PATCOPY);
+  pDC->SelectObject(pOldBrush);
+  return TRUE;
 }
 
 /*
@@ -1063,6 +1078,8 @@ void MFCCreate( HINSTANCE hInstance )
 		g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][1] = 0.0;
 		g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][2] = 0.75;
 
+    g_qeglobals.d_savedinfo.colors[COLOR_STATICMODEL] = idVec3(0.7f, 0.7f, 1.0f);
+
 
 		// old size was smaller, reload original prefs
 		if (nOldSize > 0 && nOldSize < sizeof(g_qeglobals.d_savedinfo)) {
@@ -1094,10 +1111,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct) {
 		return -1;
 	}
 
-	UINT	nID = (g_PrefsDlg.m_bWideToolbar) ? IDR_TOOLBAR_ADVANCED : IDR_TOOLBAR1;
+	//UINT	nID = (g_PrefsDlg.m_bWideToolbar) ? IDR_TOOLBAR_ADVANCED : IDR_TOOLBAR1;
 
 	if (!m_wndToolBar.CreateEx(this, TBSTYLE_FLAT, WS_CHILD | WS_VISIBLE | CBRS_TOP
-		| CBRS_GRIPPER | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC) || !m_wndToolBar.LoadToolBar(nID)) {
+		| CBRS_GRIPPER | CBRS_TOOLTIPS | CBRS_FLYBY | CBRS_SIZE_DYNAMIC) || !m_wndToolBar.LoadToolBar(IDR_TOOLBAR_ADVANCED)) {
 		TRACE0("Failed to create toolbar\n");
 		return -1;	// fail to create
 	}
@@ -1357,12 +1374,6 @@ void CMainFrame::RoutineProcessing() {
 		if (m_pCamWnd) {
 			m_pCamWnd->Cam_MouseControl(delta);
 		}
-
-		if (g_PrefsDlg.m_bQE4Painting && g_nUpdateBits) {
-			int nBits = g_nUpdateBits;	// this is done to keep this routine from being
-			g_nUpdateBits = 0;			// re-entered due to the paint process.. only
-			UpdateWindows(nBits);		// happens in rare cases but causes a stack overflow
-		}
 	}
 }
 
@@ -1533,7 +1544,7 @@ void CMainFrame::OnDestroy() {
 	}
 
 	while (entities.next != &entities) {
-		Entity_Free(entities.next);
+		delete entities.next;
 	}
 
 
@@ -1542,14 +1553,12 @@ void CMainFrame::OnDestroy() {
 	entity_t	*pEntity = g_qeglobals.d_project_entity->next;
 	while (pEntity != NULL && pEntity != g_qeglobals.d_project_entity) {
 		entity_t	*pNextEntity = pEntity->next;
-		Entity_Free(pEntity);
+		delete pEntity;
 		pEntity = pNextEntity;
 	}
 
-	Texture_Cleanup();
-
 	if (world_entity) {
-		Entity_Free(world_entity);
+		delete world_entity;
 	}
 
 	//
@@ -1873,12 +1882,9 @@ void CMainFrame::OnFileOpen() {
  =======================================================================================================================
  */
 void CMainFrame::OnFilePointfile() {
-	if (g_qeglobals.d_pointfile_display_list) {
-		Pointfile_Clear();
-	}
-	else {
-		Pointfile_Check();
-	}
+  Pointfile_Clear();
+	Pointfile_Check();
+	
 	Sys_UpdateWindows(W_ALL);
 }
 
@@ -1932,7 +1938,7 @@ void CMainFrame::OnFileSaveCopy() {
 
 	memset( &afn, 0, sizeof(OPENFILENAME) );
 
-	CString strPath = ValueForKey(g_qeglobals.d_project_entity, "basepath");
+	CString strPath = g_qeglobals.d_project_entity->ValueForKey("basepath");
 	AddSlash(strPath);
 	strPath += "maps";
 	if (g_PrefsDlg.m_strMaps.GetLength() > 0) {
@@ -2627,7 +2633,7 @@ void CMainFrame::OnMiscPreviousleakspot() {
  =======================================================================================================================
  */
 void CMainFrame::OnMiscPrintxy() {
-	WXY_Print();
+	common->Warning("Printing was removed");
 }
 
 /*
@@ -2672,7 +2678,7 @@ void CMainFrame::OnMiscSelectentitycolor() {
 	entity_t *ent = NULL;
 	if (QE_SingleBrush(true, true)) {
 		ent = selected_brushes.next->owner;
-		CString strColor = ValueForKey(ent, "_color");
+		CString strColor = ent->ValueForKey("_color");
 		if (strColor.GetLength() > 0) {
 			float	fR, fG, fB;
 			int		n = sscanf(strColor, "%f %f %f", &fR, &fG, &fB);
@@ -2796,7 +2802,7 @@ bool FindNextBrush(brush_t* pPrevFoundBrush)	// can be NULL for fresh search
 			//
 			if (!strFindKey.IsEmpty())
 			{
-				const char *psEntFoundValue = ValueForKey(ent, strFindKey);
+				const char *psEntFoundValue = ent->ValueForKey(strFindKey);
 
 				if (strlen(psEntFoundValue)
 						&&
@@ -2819,10 +2825,10 @@ bool FindNextBrush(brush_t* pPrevFoundBrush)	// can be NULL for fresh search
 			{
 				// no FIND key specified, so just scan all of them...
 				//
-				int iNumEntKeys = GetNumKeys(ent);
+				int iNumEntKeys = ent->GetNumKeys();
 				for (int i=0; i<iNumEntKeys; i++)
 				{
-					const char *psEntFoundValue = ValueForKey(ent, GetKeyString(ent, i));
+					const char *psEntFoundValue = ent->ValueForKey(ent->GetKeyString(i));
 					if (psEntFoundValue)
 					{
 						if (	(strlen(psEntFoundValue) &&	strFindValue.IsEmpty())	// if blank <value> search specified then any found-value is ok
@@ -2932,7 +2938,7 @@ void CMainFrame::OnMiscFindOrReplaceEntity()
 	 				if (FilterBrush (b))
 	 					continue;
 
-					const char *psEntFoundValue = ValueForKey(ent, strFindKey);
+					const char *psEntFoundValue = ent->ValueForKey(strFindKey);
 
 					if (stricmp(strFindValue, psEntFoundValue)==0 ||		// found this exact key/value
 						(strlen(psEntFoundValue) &&	strFindValue.IsEmpty()) // or any value for this key if blank value search specified
@@ -2940,13 +2946,13 @@ void CMainFrame::OnMiscFindOrReplaceEntity()
 					{
 						// found this search key/value, so delete it...
 						//
-						DeleteKey(ent,strFindKey);
+						ent->DeleteKey(strFindKey);
 						//
 						// and replace with the new key/value (if specified)...
 						//
 						if (!strReplaceKey.IsEmpty() && !strReplaceValue.IsEmpty())
 						{
-							SetKeyValue (ent, strReplaceKey, strReplaceValue);
+							ent->SetKeyValue(strReplaceKey, strReplaceValue);
 						}
 						iOccurences++;
 					}
@@ -3157,9 +3163,9 @@ void CMainFrame::OnBrushFlipx() {
 	for (brush_t * b = selected_brushes.next; b != &selected_brushes; b = b->next) {
 		if (b->owner->eclass->fixedsize) {
 			char	buf[16];
-			float	a = FloatForKey(b->owner, "angle");
+			float	a = b->owner->FloatForKey("angle");
 			a = div((180 - a), 180).rem;
-			SetKeyValue(b->owner, "angle", itoa(a, buf, 10));
+			b->owner->SetKeyValue("angle", itoa(a, buf, 10));
 			Brush_Build(b);
 		}
 	}
@@ -3179,7 +3185,7 @@ void CMainFrame::OnBrushFlipy() {
 	Select_FlipAxis(1);
 	for (brush_t * b = selected_brushes.next; b != &selected_brushes; b = b->next) {
 		if (b->owner->eclass->fixedsize) {
-			float	a = FloatForKey(b->owner, "angle");
+			float	a = b->owner->FloatForKey("angle");
 			if (a == 0 || a == 180 || a == 360) {
 				continue;
 			}
@@ -3203,7 +3209,7 @@ void CMainFrame::OnBrushFlipy() {
 			a = (int)a % 360;
 
 			char	buf[16];
-			SetKeyValue(b->owner, "angle", itoa(a, buf, 10));
+			b->owner->SetKeyValue("angle", itoa(a, buf, 10));
 			Brush_Build(b);
 		}
 	}
@@ -3661,9 +3667,7 @@ void CMainFrame::OnCameraAngleup() {
  */
 void CMainFrame::OnCameraBack() {
 	VectorMA(m_pCamWnd->Camera().origin, -SPEED_MOVE, m_pCamWnd->Camera().forward, m_pCamWnd->Camera().origin);
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3681,9 +3685,7 @@ void CMainFrame::OnCameraDown() {
  */
 void CMainFrame::OnCameraForward() {
 	VectorMA(m_pCamWnd->Camera().origin, SPEED_MOVE, m_pCamWnd->Camera().forward, m_pCamWnd->Camera().origin);
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3692,9 +3694,7 @@ void CMainFrame::OnCameraForward() {
  */
 void CMainFrame::OnCameraLeft() {
 	m_pCamWnd->Camera().angles[1] += SPEED_TURN;
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+  Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3703,9 +3703,7 @@ void CMainFrame::OnCameraLeft() {
  */
 void CMainFrame::OnCameraRight() {
 	m_pCamWnd->Camera().angles[1] -= SPEED_TURN;
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3714,9 +3712,7 @@ void CMainFrame::OnCameraRight() {
  */
 void CMainFrame::OnCameraStrafeleft() {
 	VectorMA(m_pCamWnd->Camera().origin, -SPEED_MOVE, m_pCamWnd->Camera().right, m_pCamWnd->Camera().origin);
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3725,9 +3721,7 @@ void CMainFrame::OnCameraStrafeleft() {
  */
 void CMainFrame::OnCameraStraferight() {
 	VectorMA(m_pCamWnd->Camera().origin, SPEED_MOVE, m_pCamWnd->Camera().right, m_pCamWnd->Camera().origin);
-
-	int nUpdate = (g_PrefsDlg.m_bCamXYUpdate) ? (W_CAMERA | W_XY) : (W_CAMERA);
-	Sys_UpdateWindows(nUpdate);
+	Sys_UpdateWindows(W_CAMERA | W_XY);
 }
 
 /*
@@ -3753,13 +3747,8 @@ void CMainFrame::OnGridToggle() {
  =======================================================================================================================
  */
 void CMainFrame::OnPrefs() {
-	BOOL	bToolbar = g_PrefsDlg.m_bWideToolbar;
 	g_PrefsDlg.LoadPrefs();
 	if (g_PrefsDlg.DoModal() == IDOK) {
-		if (g_PrefsDlg.m_bWideToolbar != bToolbar) {
-			MessageBox("You need to restart Q3Radiant for the view changes to take place.");
-		}
-
 		g_Inspectors->texWnd.UpdatePrefs();
 
 		CMenu	*pMenu = GetMenu();
@@ -3767,14 +3756,6 @@ void CMainFrame::OnPrefs() {
 			pMenu->CheckMenuItem(ID_SNAPTOGRID, MF_BYCOMMAND | (!g_PrefsDlg.m_bNoClamp) ? MF_CHECKED : MF_UNCHECKED);
 		}
 	}
-}
-
-//
-// =======================================================================================================================
-//    0 = radiant styel 1 = qe4 style
-// =======================================================================================================================
-//
-void CMainFrame::SetWindowStyle(int nStyle) {
 }
 
 /*
@@ -3971,11 +3952,8 @@ void CMainFrame::UpdateWindows(int nBits) {
  =======================================================================================================================
  =======================================================================================================================
  */
-void WINAPI Sys_UpdateWindows(int nBits) {
-	if (g_PrefsDlg.m_bQE4Painting) {
-		g_nUpdateBits |= nBits;
-	}
-	else if ( g_pParentWnd ) {
+void WINAPI Sys_UpdateWindows(int nBits) {  
+  if (g_pParentWnd) {
 		g_pParentWnd->UpdateWindows(nBits);
 	}
 }
@@ -4153,6 +4131,7 @@ void CMainFrame::OnColorSetoriginal() {
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][i] = 0.75f;
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][i] = 0.5f;
 		g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][i] = 0.25f;
+    g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][i] = 1.0f;
 	}
 
 	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBLOCK][0] = 0.0f;
@@ -4197,6 +4176,7 @@ void CMainFrame::OnColorSetqer() {
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][i] = 1.0f;
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][i] = 0.5f;
 		g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][i] = 0.25f;
+    g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][i] = 1.0f;
 	}
 
 	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBLOCK][0] = 0.0f;
@@ -4234,30 +4214,32 @@ void CMainFrame::OnColorSetqer() {
 void CMainFrame::OnColorSetSuperMal() {
 	OnColorSetqer();
 	g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][0] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][1] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][2] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][0] = 0.35f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][1] = 0.35f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][2] = 0.35f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][0] = 0.5f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][1] = 0.5f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][2] = 0.5f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][0] = 0.39f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][1] = 0.39f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][2] = 0.39f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][0] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][1] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][2] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][0] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][1] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][2] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][0] = 1.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][1] = 0.90f;
-	g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][2] = 0.90f;
-	g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][0] = 0.5f;
-	g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][1] = 0.0f;
-	g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][2] = 0.74f;
-
+  g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][1] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_TEXTUREBACK][2] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][0] = 0.45f;
+  g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][1] = 0.45f;
+  g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][2] = 0.45f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][0] = 0.35f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][1] = 0.35f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][2] = 0.35f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][0] = 0.5f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][1] = 0.5f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][2] = 0.5f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][0] = 0.39f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][1] = 0.39f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][2] = 0.39f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][0] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][1] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_GRIDTEXT][2] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][0] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][1] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES][2] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][0] = 1.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][1] = 0.90f;
+  g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][2] = 0.90f;
+  g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][0] = 0.5f;
+  g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][1] = 0.0f;
+  g_qeglobals.d_savedinfo.colors[COLOR_VIEWNAME][2] = 0.74f;
 
 	Sys_UpdateWindows(W_ALL);
 }
@@ -4272,6 +4254,7 @@ void CMainFrame::OnColorSetblack() {
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDBACK][i] = 0.0f;
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][i] = 0.0f;
 		g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][i] = 0.25f;
+    g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][i] = 0.0f;
 	}
 
 	g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][0] = 0.3f;
@@ -4316,6 +4299,7 @@ void CMainFrame::OnColorSetMax() {
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMINOR][i] = 0.83f;
 		g_qeglobals.d_savedinfo.colors[COLOR_GRIDMAJOR][i] = 0.89f;
 		g_qeglobals.d_savedinfo.colors[COLOR_CAMERABACK][i] = 0.25f;
+    g_qeglobals.d_savedinfo.colors[COLOR_WINBACK][i] = 0.8f;
 	}
 	
 	g_qeglobals.d_savedinfo.colors[COLOR_GRIDBLOCK][0] = 1.0f;
@@ -6511,15 +6495,15 @@ void CMainFrame::OnSelectionCombine()
 		// light_origin and light_rotation
 		e1->trackLightOrigin = true;
 		e1->brushes.onext->trackLightOrigin = true;
-		if (GetVectorForKey(e1, "origin", v)) {
-			SetKeyVec3(e1, "light_origin", v);
+		if (e1->GetVectorForKey("origin", v)) {
+			e1->SetKeyVec3("light_origin", v);
 			e1->lightOrigin = v;
 		}
-		if (!GetMatrixForKey(e1, "rotation", mat)) {
+		if (!e1->GetMatrixForKey("rotation", mat)) {
 			mat.Identity();
 		}
 		sprintf(str, "%g %g %g %g %g %g %g %g %g", mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2], mat[2][0], mat[2][1], mat[2][2]);
-		SetKeyValue(e1, "light_rotation", str, false);
+		e1->SetKeyValue("light_rotation", str, false);
 		e1->lightRotation = mat;
 	}
 
@@ -6527,18 +6511,18 @@ void CMainFrame::OnSelectionCombine()
 	for (brush_t *b = selected_brushes.next; b != &selected_brushes; b = b->next) {
 		if (b->owner != e1) {
 			if (e1->eclass->nShowFlags & ECLASS_LIGHT) {
-				if (GetVectorForKey(b->owner, "origin", v)) {
+				if (b->owner->GetVectorForKey("origin", v)) {
 					e1->origin = b->owner->origin;
-					SetKeyVec3(e1, "origin", b->owner->origin);
+					e1->SetKeyVec3("origin", b->owner->origin);
 				}
-				if (GetMatrixForKey(b->owner, "rotation", mat)) {
+				if (b->owner->GetMatrixForKey("rotation", mat)) {
 					e1->rotation = b->owner->rotation;
 					mat = b->owner->rotation;
 					sprintf(str, "%g %g %g %g %g %g %g %g %g", mat[0][0], mat[0][1], mat[0][2], mat[1][0], mat[1][1], mat[1][2], mat[2][0], mat[2][1], mat[2][2]);
-					SetKeyValue(e1, "rotation", str, false);
+					e1->SetKeyValue("rotation", str, false);
 				}
 				if (b->modelHandle) {
-					SetKeyValue(e1, "model", ValueForKey(b->owner, "model"));
+					e1->SetKeyValue("model", b->owner->ValueForKey("model"));
 					setModel = false;
 				} else {
 					b->entityModel = true;
@@ -6550,7 +6534,7 @@ void CMainFrame::OnSelectionCombine()
 	}
 
 	if (setModel) {
-		SetKeyValue(e1, "model", ValueForKey(e1, "name"));
+		e1->SetKeyValue("model", e1->ValueForKey("name"));
 	}
 
 	Select_Deselect();

@@ -94,6 +94,8 @@ typedef struct srfTriangles_s {
 	bool						perfectHull;			// true if there aren't any dangling edges
 	bool						deformedSurface;		// if true, indexes, silIndexes, mirrorVerts, and silEdges are
 														// pointers into the original surface, and should not be freed
+	depthBlendMode_t			depthBlendMode;
+	float						depthBlendRange;
 
 	int							numVerts;				// number of vertices
 	idDrawVert *				verts;					// vertices, allocated with special allocator
@@ -135,7 +137,6 @@ typedef struct srfTriangles_s {
 	// data in vertex object space, not directly readable by the CPU
 	struct vertCache_s *		indexCache;				// int
 	struct vertCache_s *		ambientCache;			// idDrawVert
-	struct vertCache_s *		lightingCache;			// lightingCache_t
 	struct vertCache_s *		shadowCache;			// shadowCache_t
 } srfTriangles_t;
 

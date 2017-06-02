@@ -78,6 +78,17 @@ typedef unsigned int			dword;		// 32 bits
 typedef unsigned int			uint;
 typedef unsigned long			ulong;
 
+typedef unsigned int   uint32;
+typedef signed   int   int32;
+typedef unsigned short uint16;
+typedef signed   short int16;
+typedef unsigned long long uint64;
+typedef signed long long   int64;
+
+static_assert(sizeof(uint64) == 8 && sizeof(int64) == 8, "");
+static_assert(sizeof(uint32) == 4 && sizeof(int32) == 4, "");
+static_assert(sizeof(uint16) == 2 && sizeof(int16) == 2, "");
+
 typedef int						qhandle_t;
 
 class idFile;
@@ -139,7 +150,6 @@ bool	Swap_IsBigEndian( void );
 // for base64
 void	SixtetsForInt( byte *out, int src);
 int		IntForSixtets( byte *in );
-
 
 #ifdef _DEBUG
 void AssertFailed( const char *file, int line, const char *expression );

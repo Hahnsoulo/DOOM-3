@@ -3,6 +3,7 @@
 
 Doom 3 GPL Source Code
 Copyright (C) 1999-2011 id Software LLC, a ZeniMax Media company. 
+Copyright (C) 2016 Johannes Ohlemacher (http://github.com/eXistence/fhDOOM)
 
 This file is part of the Doom 3 GPL Source Code (?Doom 3 Source Code?).  
 
@@ -30,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "ImageData.h"
 
 /*
 
@@ -205,7 +207,6 @@ typedef struct _TargaHeader {
 	unsigned short	x_origin, y_origin, width, height;
 	unsigned char	pixel_size, attributes;
 } TargaHeader;
-
 
 
 /*
@@ -1019,26 +1020,56 @@ void R_LoadImage( const char *cname, byte **pic, int *width, int *height, ID_TIM
 
 	name.ToLower();
 	idStr ext;
-	name.ExtractFileExtension( ext );
-
-	if ( ext == "tga" ) {
-		LoadTGA( name.c_str(), pic, width, height, timestamp );            // try tga first
-		if ( ( pic && *pic == 0 ) || ( timestamp && *timestamp == -1 ) ) {
-			name.StripFileExtension();
-			name.DefaultFileExtension( ".jpg" );
-			LoadJPG( name.c_str(), pic, width, height, timestamp );
+	name.ExtractFileExtension( ext );	
+#if 1
+	fhImageData imageData;
+	bool ok = imageData.LoadFile(name.c_str(), true);
+	if (ok && imageData.IsValid()) {
+		if (pic) {
+			*pic = (byte*)R_StaticAlloc(imageData.GetSize(0));
+			memcpy(*pic, imageData.GetData(0, 0), imageData.GetSize(0));
 		}
-	} else if ( ext == "pcx" ) {
-		LoadPCX32( name.c_str(), pic, width, height, timestamp );
-	} else if ( ext == "bmp" ) {
-		LoadBMP( name.c_str(), pic, width, height, timestamp );
-	} else if ( ext == "jpg" ) {
-		LoadJPG( name.c_str(), pic, width, height, timestamp );
-	}
 
-	if ( ( width && *width < 1 ) || ( height && *height < 1 ) ) {
-		if ( pic && *pic ) {
-			R_StaticFree( *pic );
+		if (width) {
+			*width = imageData.GetWidth(0);
+		}
+
+		if (height) {
+			*height = imageData.GetHeight(0);
+		}
+
+		if (timestamp) {
+			*timestamp = imageData.GetTimeStamp();
+		}
+
+		imageData.Clear();
+	}
+	else {
+#endif
+		if (ext == "tga") {
+			LoadTGA(name.c_str(), pic, width, height, timestamp);            // try tga first
+			if ((pic && *pic == 0) || (timestamp && *timestamp == -1)) {
+				name.StripFileExtension();
+				name.DefaultFileExtension(".jpg");
+				LoadJPG(name.c_str(), pic, width, height, timestamp);
+			}
+		}
+		else if (ext == "pcx") {
+			LoadPCX32(name.c_str(), pic, width, height, timestamp);
+		}
+		else if (ext == "bmp") {
+			LoadBMP(name.c_str(), pic, width, height, timestamp);
+		}
+		else if (ext == "jpg") {
+			LoadJPG(name.c_str(), pic, width, height, timestamp);
+		}
+#if 1
+	}
+#endif
+
+	if ((width && *width < 1) || (height && *height < 1)) {
+		if (pic && *pic) {
+			R_StaticFree(*pic);
 			*pic = 0;
 		}
 	}
@@ -1074,108 +1105,4 @@ void R_LoadImage( const char *cname, byte **pic, int *width, int *height, ID_TIM
 			*height = scaled_height;
 		}
 	}
-}
-
-
-/*
-=======================
-R_LoadCubeImages
-
-Loads six files with proper extensions
-=======================
-*/
-bool R_LoadCubeImages( const char *imgName, cubeFiles_t extensions, byte *pics[6], int *outSize, ID_TIME_T *timestamp ) {
-	int		i, j;
-	char	*cameraSides[6] =  { "_forward.tga", "_back.tga", "_left.tga", "_right.tga", 
-		"_up.tga", "_down.tga" };
-	char	*axisSides[6] =  { "_px.tga", "_nx.tga", "_py.tga", "_ny.tga", 
-		"_pz.tga", "_nz.tga" };
-	char	**sides;
-	char	fullName[MAX_IMAGE_NAME];
-	int		width, height, size = 0;
-
-	if ( extensions == CF_CAMERA ) {
-		sides = cameraSides;
-	} else {
-		sides = axisSides;
-	}
-
-	// FIXME: precompressed cube map files
-	if ( pics ) {
-		memset( pics, 0, 6*sizeof(pics[0]) );
-	}
-	if ( timestamp ) {
-		*timestamp = 0;
-	}
-
-	for ( i = 0 ; i < 6 ; i++ ) {
-		idStr::snPrintf( fullName, sizeof( fullName ), "%s%s", imgName, sides[i] );
-
-		ID_TIME_T thisTime;
-		if ( !pics ) {
-			// just checking timestamps
-			R_LoadImageProgram( fullName, NULL, &width, &height, &thisTime );
-		} else {
-			R_LoadImageProgram( fullName, &pics[i], &width, &height, &thisTime );
-		}
-		if ( thisTime == FILE_NOT_FOUND_TIMESTAMP ) {
-			break;
-		}
-		if ( i == 0 ) {
-			size = width;
-		}
-		if ( width != size || height != size ) {
-			common->Warning( "Mismatched sizes on cube map '%s'", imgName );
-			break;
-		}
-		if ( timestamp ) {
-			if ( thisTime > *timestamp ) {
-				*timestamp = thisTime;
-			}
-		}
-		if ( pics && extensions == CF_CAMERA ) {
-			// convert from "camera" images to native cube map images
-			switch( i ) {
-			case 0:	// forward
-				R_RotatePic( pics[i], width);
-				break;
-			case 1:	// back
-				R_RotatePic( pics[i], width);
-				R_HorizontalFlip( pics[i], width, height );
-				R_VerticalFlip( pics[i], width, height );
-				break;
-			case 2:	// left
-				R_VerticalFlip( pics[i], width, height );
-				break;
-			case 3:	// right
-				R_HorizontalFlip( pics[i], width, height );
-				break;
-			case 4:	// up
-				R_RotatePic( pics[i], width);
-				break;
-			case 5: // down
-				R_RotatePic( pics[i], width);
-				break;
-			}
-		}
-	}
-
-	if ( i != 6 ) {
-		// we had an error, so free everything
-		if ( pics ) {
-			for ( j = 0 ; j < i ; j++ ) {
-				R_StaticFree( pics[j] );
-			}
-		}
-
-		if ( timestamp ) {
-			*timestamp = 0;
-		}
-		return false;
-	}
-
-	if ( outSize ) {
-		*outSize = size;
-	}
-	return true;
 }

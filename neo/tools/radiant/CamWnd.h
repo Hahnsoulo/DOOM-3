@@ -36,9 +36,7 @@ typedef enum
 {
 	cd_wire,
 	cd_solid,
-	cd_texture,
-	cd_light,
-	cd_blend
+	cd_texture
 } camera_draw_mode;
 
 typedef struct
@@ -155,20 +153,16 @@ protected:
 	void	FreeRendererState();
 	void	UpdateCaption();
 	bool	BuildBrushRenderData(brush_t *brush);
-	void	DrawEntityData();
-
 
 	camera_t m_Camera;
 	int	m_nCambuttonstate;
 	CPoint m_ptButton;
 	CPoint m_ptCursor;
 	CPoint m_ptLastCursor;
-	face_t* m_pSide_select;
 	idVec3 m_vCull1;
 	idVec3 m_vCull2;
 	int m_nCullv1[3];
 	int m_nCullv2[3];
-	bool m_bClipMode;
 	idVec3 saveOrg;
 	idAngles saveAng;
 	bool saveValid;

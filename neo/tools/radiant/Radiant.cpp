@@ -134,9 +134,9 @@ void RadiantInit( void ) {
 		// Perform specific initializations
 		pThread->InitInstance();
 
-		qglFinish();
-		//qwglMakeCurrent(0, 0);
-		qwglMakeCurrent(win32.hDC, win32.hGLRC);
+		glFinish();
+		//wglMakeCurrent(0, 0);
+		wglMakeCurrent(win32.hDC, win32.hGLRC);
 
 		// hide the doom window by default
 		::ShowWindow( win32.hWnd, SW_HIDE );
@@ -170,12 +170,12 @@ void RadiantRun( void ) {
 
 	try {
 		if (!exceptionErr && !show) {
-			//qglPushAttrib(GL_ALL_ATTRIB_BITS);
-			qglDepthMask(true);
+			//glPushAttrib(GL_ALL_ATTRIB_BITS);
+			glDepthMask(true);
 			theApp.Run();
-			//qglPopAttrib();
-			//qwglMakeCurrent(0, 0);
-			qwglMakeCurrent(win32.hDC, win32.hGLRC);
+			//glPopAttrib();
+			//wglMakeCurrent(0, 0);
+			wglMakeCurrent(win32.hDC, win32.hGLRC);
 		}
 	}
 	catch( idException &ex ) {
@@ -187,7 +187,6 @@ void RadiantRun( void ) {
 /////////////////////////////////////////////////////////////////////////////
 // CRadiantApp initialization
 
-HINSTANCE g_hOpenGL32 = NULL;
 HINSTANCE g_hOpenGL = NULL;
 bool g_bBuildList = false;
 
@@ -294,15 +293,13 @@ BOOL CRadiantApp::InitInstance()
 
 	g_PrefsDlg.LoadPrefs();
 
-	qglEnableClientState( GL_VERTEX_ARRAY );
-
 	CString strTemp = m_lpCmdLine;
 	strTemp.MakeLower();
 	if (strTemp.Find("builddefs") >= 0) {
 		g_bBuildList = true;
 	}
 
-	CMainFrame* pMainFrame = new CMainFrame;
+	CMainFrame* pMainFrame = new CMainFrame();
 	if (!pMainFrame->LoadFrame(IDR_MENU_QUAKE3)) {
 		return FALSE;
 	}

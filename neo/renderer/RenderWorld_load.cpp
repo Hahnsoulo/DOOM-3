@@ -115,19 +115,15 @@ void idRenderWorldLocal::TouchWorldModels( void ) {
 idRenderWorldLocal::ParseModel
 ================
 */
-idRenderModel *idRenderWorldLocal::ParseModel( idLexer *src ) {
-	idRenderModel	*model;
+static idRenderModel* ParseModel( idLexer *src ) {
 	idToken			token;
-	int				i, j;
-	srfTriangles_t	*tri;
-	modelSurface_t	surf;
 
 	src->ExpectTokenString( "{" );
 
 	// parse the name
 	src->ExpectAnyToken( &token );
 
-	model = renderModelManager->AllocModel();
+	idRenderModel* model = renderModelManager->AllocModel();
 	model->InitEmpty( token );
 
 	int numSurfaces = src->ParseInt();
@@ -135,23 +131,24 @@ idRenderModel *idRenderWorldLocal::ParseModel( idLexer *src ) {
 		src->Error( "R_ParseModel: bad numSurfaces" );
 	}
 
-	for ( i = 0 ; i < numSurfaces ; i++ ) {
+	for ( int i = 0 ; i < numSurfaces ; i++ ) {
 		src->ExpectTokenString( "{" );
 
 		src->ExpectAnyToken( &token );
 
+		modelSurface_t	surf;
 		surf.shader = declManager->FindMaterial( token );
 
 		((idMaterial*)surf.shader)->AddReference();
 
-		tri = R_AllocStaticTriSurf();
+		srfTriangles_t* tri = R_AllocStaticTriSurf();
 		surf.geometry = tri;
-
+		
 		tri->numVerts = src->ParseInt();
 		tri->numIndexes = src->ParseInt();
 
 		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
-		for ( j = 0 ; j < tri->numVerts ; j++ ) {
+		for ( int j = 0 ; j < tri->numVerts ; j++ ) {
 			float	vec[8];
 
 			src->Parse1DMatrix( 8, vec );
@@ -167,7 +164,80 @@ idRenderModel *idRenderWorldLocal::ParseModel( idLexer *src ) {
 		}
 
 		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
-		for ( j = 0 ; j < tri->numIndexes ; j++ ) {
+		for ( int j = 0 ; j < tri->numIndexes ; j++ ) {
+			tri->indexes[j] = src->ParseInt();
+		}
+		src->ExpectTokenString( "}" );
+
+		// add the completed surface to the model
+		model->AddSurface( surf );
+	}
+
+	src->ExpectTokenString( "}" );
+
+	model->FinishSurfaces();
+
+	return model;
+}
+
+
+/*
+================
+idRenderWorldLocal::ParseOccluder
+================
+*/
+static idRenderModel* ParseOccluder( idLexer *src ) {
+	idToken			token;
+
+	src->ExpectTokenString( "{" );
+
+	// parse the name
+	src->ExpectAnyToken( &token );
+
+	idRenderModel* model = renderModelManager->AllocModel();
+	model->InitEmpty( token );
+
+	int numSurfaces = src->ParseInt();
+	if (numSurfaces < 0) {
+		src->Error( "R_ParseModel: bad numSurfaces" );
+	}
+
+	for (int i = 0; i < numSurfaces; i++) {
+		src->ExpectTokenString( "{" );
+
+		src->ExpectAnyToken( &token );
+
+		modelSurface_t	surf;
+		surf.shader = declManager->FindMaterial( token );
+
+		((idMaterial*)surf.shader)->AddReference();
+
+		srfTriangles_t* tri = R_AllocStaticTriSurf();
+		surf.geometry = tri;
+
+		tri->numVerts = src->ParseInt();
+		tri->numIndexes = src->ParseInt();
+		bool texcoords = (src->ParseInt() != 1);
+
+		R_AllocStaticTriSurfVerts( tri, tri->numVerts );
+		for (int j = 0; j < tri->numVerts; j++) {
+			float	vec[5];
+
+			if(texcoords) {
+				src->Parse1DMatrix( 5, vec );
+			} else {
+				src->Parse1DMatrix( 3, vec );
+			}
+
+			tri->verts[j].xyz[0] = vec[0];
+			tri->verts[j].xyz[1] = vec[1];
+			tri->verts[j].xyz[2] = vec[2];
+			tri->verts[j].st[0] = vec[3];
+			tri->verts[j].st[1] = vec[4];
+		}
+
+		R_AllocStaticTriSurfIndexes( tri, tri->numIndexes );
+		for (int j = 0; j < tri->numIndexes; j++) {
 			tri->indexes[j] = src->ParseInt();
 		}
 		src->ExpectTokenString( "}" );
@@ -188,7 +258,7 @@ idRenderModel *idRenderWorldLocal::ParseModel( idLexer *src ) {
 idRenderWorldLocal::ParseShadowModel
 ================
 */
-idRenderModel *idRenderWorldLocal::ParseShadowModel( idLexer *src ) {
+static idRenderModel* ParseShadowModel( idLexer *src ) {
 	idRenderModel	*model;
 	idToken			token;
 	int				j;
@@ -476,23 +546,31 @@ A NULL or empty name will make a world without a map model, which
 is still useful for displaying a bare model
 =================
 */
-bool idRenderWorldLocal::InitFromMap( const char *name ) {
-	idLexer *		src;
-	idToken			token;
-	idStr			filename;
-	idRenderModel *	lastModel;
-
+bool idRenderWorldLocal::InitFromMap( const char *name ) {			
 	// if this is an empty world, initialize manually
-	if ( !name || !name[0] ) {
+	if (!name || !name[0]) {
 		FreeWorld();
 		mapName.Clear();
 		ClearWorld();
 		return true;
 	}
 
+	if(!LoadProc(name))
+		return false;
+
+	return LoadOcl(name);
+}
+
+/*
+=====================
+idRenderWorldLocal::LoadProc
+=====================
+*/
+bool idRenderWorldLocal::LoadProc(const char* name) {
+	assert(name && name[0] && "name must not be empty at this point");
 
 	// load it
-	filename = name;
+	idStr filename = name;
 	filename.SetFileExtension( PROC_FILE_EXT );
 
 	// if we are reloading the same map, check the timestamp
@@ -500,50 +578,49 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 	ID_TIME_T currentTimeStamp;
 	fileSystem->ReadFile( filename, NULL, &currentTimeStamp );
 
-	if ( name == mapName ) {
-		if ( currentTimeStamp != FILE_NOT_FOUND_TIMESTAMP && currentTimeStamp == mapTimeStamp ) {
-			common->Printf( "idRenderWorldLocal::InitFromMap: retaining existing map\n" );
+	if (name == mapName) {
+		if (currentTimeStamp != FILE_NOT_FOUND_TIMESTAMP && currentTimeStamp == mapTimeStamp) {
+			common->Printf( "idRenderWorldLocal::LoadProc: retaining existing map\n" );
 			FreeDefs();
 			TouchWorldModels();
 			AddWorldModelEntities();
 			ClearPortalStates();
 			return true;
 		}
-		common->Printf( "idRenderWorldLocal::InitFromMap: timestamp has changed, reloading.\n" );
+		common->Printf( "idRenderWorldLocal::LoadProc: timestamp has changed, reloading.\n" );
 	}
 
 	FreeWorld();
 
-	src = new idLexer( filename, LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE );
-	if ( !src->IsLoaded() ) {
-		common->Printf( "idRenderWorldLocal::InitFromMap: %s not found\n", filename.c_str() );
+	idLexer src( filename, LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE );
+	if (!src.IsLoaded()) {
+		common->Printf( "idRenderWorldLocal::LoadProc: %s not found\n", filename.c_str() );
 		ClearWorld();
 		return false;
 	}
-
 
 	mapName = name;
 	mapTimeStamp = currentTimeStamp;
 
 	// if we are writing a demo, archive the load command
-	if ( session->writeDemo ) {
+	if (session->writeDemo) {
 		WriteLoadMap();
 	}
 
-	if ( !src->ReadToken( &token ) || token.Icmp( PROC_FILE_ID ) ) {
-		common->Printf( "idRenderWorldLocal::InitFromMap: bad id '%s' instead of '%s'\n", token.c_str(), PROC_FILE_ID );
-		delete src;
+	idToken token;
+	if (!src.ReadToken( &token ) || token.Icmp( PROC_FILE_ID )) {
+		common->Printf( "idRenderWorldLocal::LoadProc: bad id '%s' instead of '%s'\n", token.c_str(), PROC_FILE_ID );
 		return false;
 	}
 
 	// parse the file
-	while ( 1 ) {
-		if ( !src->ReadToken( &token ) ) {
+	while (1) {
+		if (!src.ReadToken( &token )) {
 			break;
 		}
 
-		if ( token == "model" ) {
-			lastModel = ParseModel( src );
+		if (token == "model") {
+			idRenderModel* lastModel = ParseModel( &src );
 
 			// add it to the model manager list
 			renderModelManager->AddModel( lastModel );
@@ -553,8 +630,8 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 			continue;
 		}
 
-		if ( token == "shadowModel" ) {
-			lastModel = ParseShadowModel( src );
+		if (token == "shadowModel") {
+			idRenderModel* lastModel = ParseShadowModel( &src );
 
 			// add it to the model manager list
 			renderModelManager->AddModel( lastModel );
@@ -564,23 +641,21 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 			continue;
 		}
 
-		if ( token == "interAreaPortals" ) {
-			ParseInterAreaPortals( src );
+		if (token == "interAreaPortals") {
+			ParseInterAreaPortals( &src );
 			continue;
 		}
 
-		if ( token == "nodes" ) {
-			ParseNodes( src );
+		if (token == "nodes") {
+			ParseNodes( &src );
 			continue;
 		}
 
-		src->Error( "idRenderWorldLocal::InitFromMap: bad token \"%s\"", token.c_str() );
+		src.Error( "idRenderWorldLocal::LoadProc: bad token \"%s\"", token.c_str() );
 	}
 
-	delete src;
-
 	// if it was a trivial map without any areas, create a single area
-	if ( !numPortalAreas ) {
+	if (!numPortalAreas) {
 		ClearWorld();
 	}
 
@@ -589,6 +664,67 @@ bool idRenderWorldLocal::InitFromMap( const char *name ) {
 
 	AddWorldModelEntities();
 	ClearPortalStates();
+
+	// done!
+	return true;
+}
+
+/*
+=====================
+idRenderWorldLocal::LoadOcl
+=====================
+*/
+bool idRenderWorldLocal::LoadOcl( const char* name ) {
+	assert(name && name[0] && "name must not be empty at this point");
+
+	// load it
+	idStr filename = name;
+	filename.SetFileExtension( OCL_FILE_EXT );
+
+	// if we are reloading the same map, check the timestamp
+	// and try to skip all the work
+	ID_TIME_T currentTimeStamp;
+	fileSystem->ReadFile( filename, NULL, &currentTimeStamp );
+/*
+	if (name == mapName) {
+		if (currentTimeStamp != FILE_NOT_FOUND_TIMESTAMP && currentTimeStamp == mapTimeStamp) {
+			common->Printf( "idRenderWorldLocal::LoadOcl: retaining existing map\n" );
+			return true;
+		}
+		common->Printf( "idRenderWorldLocal::LoadOcl: timestamp has changed, reloading.\n" );
+	}
+*/	
+	idLexer src( filename, LEXFL_NOSTRINGCONCAT | LEXFL_NODOLLARPRECOMPILE );
+	if (!src.IsLoaded()) {
+		common->Warning( "idRenderWorldLocal::LoadOcl: %s not found\n", filename.c_str() );
+		return true;
+	}
+
+	idToken token;
+	if (!src.ReadToken( &token ) || token.Icmp( OCL_FILE_ID )) {
+		common->Printf( "idRenderWorldLocal::LoadOcl: bad id '%s' instead of '%s'\n", token.c_str(), OCL_FILE_ID );
+		return false;
+	}
+
+	// parse the file
+	while (1) {
+		if (!src.ReadToken( &token )) {
+			break;
+		}
+
+		if (token == "occluder") {
+			idRenderModel* lastModel = ParseOccluder( &src );
+
+			// add it to the model manager list
+			renderModelManager->AddModel( lastModel );
+
+			// save it in the list to free when clearing this map
+			localModels.Append( lastModel );
+			continue;
+		}
+
+		src.Error( "idRenderWorldLocal::LoadOcl: bad token \"%s\"", token.c_str() );
+	}
 
 	// done!
 	return true;
@@ -617,24 +753,86 @@ void idRenderWorldLocal::ClearPortalStates() {
 }
 
 /*
+================
+CombineModelSurfaces
+
+Frees the model and returns a new model with all triangles combined
+into one surface
+================
+*/
+static idRenderModel *CombineModelSurfaces( idRenderModel *model, const char* name ) {
+	int		totalVerts;
+	int		totalIndexes;
+	int		numIndexes;
+	int		numVerts;
+	int		i, j;
+
+	totalVerts = 0;
+	totalIndexes = 0;
+
+	for (i = 0; i < model->NumSurfaces(); i++) {
+		const modelSurface_t	*surf = model->Surface( i );
+
+		totalVerts += surf->geometry->numVerts;
+		totalIndexes += surf->geometry->numIndexes;
+	}
+
+	srfTriangles_t *newTri = R_AllocStaticTriSurf();
+	R_AllocStaticTriSurfVerts( newTri, totalVerts );
+	R_AllocStaticTriSurfIndexes( newTri, totalIndexes );
+
+	newTri->numVerts = totalVerts;
+	newTri->numIndexes = totalIndexes;
+
+	newTri->bounds.Clear();
+
+	idDrawVert *verts = newTri->verts;
+	glIndex_t *indexes = newTri->indexes;
+	numIndexes = 0;
+	numVerts = 0;
+	for (i = 0; i < model->NumSurfaces(); i++) {
+		const modelSurface_t *surf = model->Surface( i );
+		const srfTriangles_t *tri = surf->geometry;
+
+		memcpy( verts + numVerts, tri->verts, tri->numVerts * sizeof(tri->verts[0]) );
+		for (j = 0; j < tri->numIndexes; j++) {
+			indexes[numIndexes + j] = numVerts + tri->indexes[j];
+		}
+		newTri->bounds.AddBounds( tri->bounds );
+		numIndexes += tri->numIndexes;
+		numVerts += tri->numVerts;
+	}
+
+	modelSurface_t surf;
+
+	surf.id = 0;
+	surf.geometry = newTri;
+	surf.shader = tr.defaultMaterial;
+
+	idRenderModel *newModel = renderModelManager->AllocModel();
+	newModel->InitEmpty(name);
+	newModel->AddSurface( surf );
+
+	renderModelManager->FreeModel( model );
+
+	return newModel;
+}
+
+
+/*
 =====================
 idRenderWorldLocal::AddWorldModelEntities
 =====================
 */
 void idRenderWorldLocal::AddWorldModelEntities() {
-	int		i;
-
 	// add the world model for each portal area
 	// we can't just call AddEntityDef, because that would place the references
 	// based on the bounding box, rather than explicitly into the correct area
-	for ( i = 0 ; i < numPortalAreas ; i++ ) {
-		idRenderEntityLocal	*def;
-		int			index;
-
-		def = new idRenderEntityLocal;
+	for ( int i = 0 ; i < numPortalAreas ; i++ ) {
+		idRenderEntityLocal* def = new idRenderEntityLocal;		
 
 		// try and reuse a free spot
-		index = entityDefs.FindNull();
+		int index = entityDefs.FindNull();
 		if ( index == -1 ) {
 			index = entityDefs.Append(def);
 		} else {
@@ -651,13 +849,58 @@ void idRenderWorldLocal::AddWorldModelEntities() {
 
 		idRenderModel *hModel = def->parms.hModel;
 
+		//helper model to merge all static and fully opaque world surfaces,
+		//so depth information for shadow maps for those surfaces can be rendered
+		//with just one draw call
+		idRenderModel* staticOccluderModel = renderModelManager->AllocModel();
+
 		for ( int j = 0; j < hModel->NumSurfaces(); j++ ) {
 			const modelSurface_t *surf = hModel->Surface( j );
 
 			if ( surf->shader->GetName() == idStr( "textures/smf/portal_sky" ) ) {
 				def->needsPortalSky = true;
 			}
+
+			if ( surf->geometry->numVerts <= 0 ) {
+				continue;
+			}
+			
+			//if surface cast a shadow and is fully opaque, add a copy of it the staticOccluderModel helper model
+			if(surf->shader->SurfaceCastsShadow() && surf->shader->Coverage() == MC_OPAQUE) {
+				modelSurface_s newSurf;
+				newSurf.shader = declManager->FindMaterial("_default");
+				newSurf.id = 0;
+				
+				newSurf.geometry = R_AllocStaticTriSurf();
+				newSurf.geometry->numVerts = surf->geometry->numVerts;
+				newSurf.geometry->numIndexes = surf->geometry->numIndexes;
+				
+				R_AllocStaticTriSurfVerts( newSurf.geometry, newSurf.geometry->numVerts );
+				R_AllocStaticTriSurfIndexes( newSurf.geometry, newSurf.geometry->numIndexes );
+
+				memcpy(newSurf.geometry->indexes, surf->geometry->indexes, sizeof(surf->geometry->indexes[0]) * newSurf.geometry->numIndexes);
+				memcpy(newSurf.geometry->verts, surf->geometry->verts, sizeof(surf->geometry->verts[0]) * newSurf.geometry->numVerts);
+				
+				staticOccluderModel->AddSurface(newSurf);
+			}			
 		}
+
+		//combine all surfaces of helper model to one single surface and use that
+		staticOccluderModel = CombineModelSurfaces(staticOccluderModel, va("_area_%d_occluders", i));				
+
+		if(staticOccluderModel->NumSurfaces() > 0 && staticOccluderModel->Surface(0)->geometry->numVerts > 0) {		
+			// add it to the model manager list
+			renderModelManager->AddModel( staticOccluderModel );
+			// save it in the list to free when clearing this map
+			localModels.Append( staticOccluderModel );			
+			//use as static occluder model
+			def->staticOccluderModel = staticOccluderModel;
+		} else {
+			//static occluder model is empty, no need to keep it.
+			renderModelManager->FreeModel(staticOccluderModel);
+			def->staticOccluderModel = nullptr;
+		}		
+
 
 		def->referenceBounds = def->parms.hModel->Bounds();
 

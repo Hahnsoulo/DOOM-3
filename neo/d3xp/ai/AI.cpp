@@ -1020,7 +1020,7 @@ void idAI::InitMuzzleFlash( void ) {
 	flashTime = SEC2MS( spawnArgs.GetFloat( "flashTime", "0.25" ) );
 
 	memset( &worldMuzzleFlash, 0, sizeof ( worldMuzzleFlash ) );
-
+	
 	worldMuzzleFlash.pointLight = true;
 	worldMuzzleFlash.shader = declManager->FindMaterial( shader, false );
 	worldMuzzleFlash.shaderParms[ SHADERPARM_RED ] = flashColor[0];
@@ -1192,6 +1192,10 @@ void idAI::Think( void ) {
 				SlideMove();
 				PlayChatter();
 				CheckBlink();
+				break;
+
+			case NUM_MOVETYPES:
+				//ignore
 				break;
 			}
 		}
@@ -2227,7 +2231,7 @@ bool idAI::NewWanderDir( const idVec3 &dest ) {
 	}
 
 	// try other directions
-	if ( ( gameLocal.random.RandomInt() & 1 ) || abs( deltay ) > abs( deltax ) ) {
+	if ( ( gameLocal.random.RandomInt() & 1 ) || fabs( deltay ) > fabs( deltax ) ) {
 		tdir = d[ 1 ];
 		d[ 1 ] = d[ 2 ];
 		d[ 2 ] = tdir;
@@ -2307,6 +2311,9 @@ bool idAI::GetMovePos( idVec3 &seekPos ) {
 	case MOVE_SLIDE_TO_POSITION :
 		seekPos = org;
 		return false;
+		break;
+
+	default:
 		break;
 	}
 
@@ -4631,6 +4638,7 @@ void idAI::TriggerWeaponEffects( const idVec3 &muzzle ) {
 		GetJointWorldTransform( flashJointWorld, gameLocal.time, org, axis );
 
 		if ( worldMuzzleFlash.lightRadius.x > 0.0f ) {
+			worldMuzzleFlash.smLodBias = g_muzzleFlashLightLodBias.GetInteger();
 			worldMuzzleFlash.axis = axis;
 			worldMuzzleFlash.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC( gameLocal.time );
 			if ( worldMuzzleFlashHandle != - 1 ) {

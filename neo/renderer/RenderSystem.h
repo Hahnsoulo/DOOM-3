@@ -45,11 +45,11 @@ typedef struct glconfig_s {
 	const char			*renderer_string;
 	const char			*vendor_string;
 	const char			*version_string;
-	const char			*extensions_string;
 	const char			*wgl_extensions_string;
 
-	float				glVersion;				// atof( version_string )
+	bool				vendorisAMD;
 
+	float				glVersion;				// atof( version_string )
 
 	int					maxTextureSize;			// queried from GL
 	int					maxTextureUnits;
@@ -62,38 +62,21 @@ typedef struct glconfig_s {
 	bool				multitextureAvailable;
 	bool				textureCompressionAvailable;
 	bool				anisotropicAvailable;
-	bool				textureLODBiasAvailable;
 	bool				textureEnvAddAvailable;
-	bool				textureEnvCombineAvailable;
-	bool				registerCombinersAvailable;
 	bool				cubeMapAvailable;
-	bool				envDot3Available;
-	bool				texture3DAvailable;
-	bool				sharedTexturePaletteAvailable;
-	bool				ARBVertexBufferObjectAvailable;
-	bool				ARBVertexProgramAvailable;
-	bool				ARBFragmentProgramAvailable;
-	bool				twoSidedStencilAvailable;
+	bool				envDot3Available;		
 	bool				textureNonPowerOfTwoAvailable;
 	bool				depthBoundsTestAvailable;
-
-	// ati r200 extensions
-	bool				atiFragmentShaderAvailable;
-
-	// ati r300
-	bool				atiTwoSidedStencilAvailable;
+	bool                extDirectStateAccessAvailable;
+	bool                arbDirectStateAccessAvailable;
 
 	int					vidWidth, vidHeight;	// passed to R_BeginFrame
+	int					renderWidth, renderHeight;	// passed to R_BeginFrame
+	int					vidAspectRatio;
 
 	int					displayFrequency;
 
 	bool				isFullscreen;
-
-	bool				allowNV30Path;
-	bool				allowNV20Path;
-	bool				allowNV10Path;
-	bool				allowR200Path;
-	bool				allowARB2Path;
 
 	bool				isInitialized;
 } glconfig_t;
@@ -143,6 +126,80 @@ typedef struct {
 	char				name[64];
 } fontInfoEx_t;
 
+struct backEndGroup {
+	enum Enum {
+		DepthPrepass,
+		StencilShadows,
+		ShadowMap0,
+		ShadowMap1,
+		ShadowMap2,
+		Interaction,
+		FogLight,
+		BlendLight,
+		NonInteraction,
+		NUM
+	};
+
+	Enum value;
+};
+
+struct backEndGroupStats_t {
+	backEndGroupStats_t()
+		: drawcalls(0)
+		, passes(0)
+		, tris(0)
+		, time(0)
+	{}
+
+	uint32 drawcalls;
+	uint32 passes;
+	uint32 tris;
+	uint64 time; //micro seconds	
+
+	const backEndGroupStats_t& operator+=(const backEndGroupStats_t& rhs) {
+		drawcalls += rhs.drawcalls;
+		passes += rhs.passes;
+		time += rhs.time;
+		tris += rhs.tris;
+
+		return *this;
+	}
+
+	const backEndGroupStats_t& operator/=(uint32 v) {
+		drawcalls /= v;
+		passes /= v;
+		time /= v;
+		tris /= v;
+
+		return *this;
+	}
+};
+
+struct backEndStats_t {
+	backEndStats_t()
+		: totaltime(0)
+	{}
+
+	backEndGroupStats_t groups[backEndGroup::NUM];
+	uint64 totaltime;
+
+	const backEndStats_t& operator+=(const backEndStats_t& rhs) {
+		for(int i=0; i<backEndGroup::NUM; ++i) {
+			groups[i] += rhs.groups[i];
+		}
+		totaltime += rhs.totaltime;
+		return *this;
+	}
+
+	const backEndStats_t& operator/=(uint32 v) {
+		for (int i = 0; i < backEndGroup::NUM; ++i) {
+			groups[i] /= v;
+		}
+		totaltime /= v;
+		return *this;
+	}
+};
+
 const int SMALLCHAR_WIDTH		= 8;
 const int SMALLCHAR_HEIGHT		= 16;
 const int BIGCHAR_WIDTH			= 16;
@@ -177,6 +234,7 @@ public:
 	virtual bool			IsFullScreen( void ) const = 0;
 	virtual int				GetScreenWidth( void ) const = 0;
 	virtual int				GetScreenHeight( void ) const = 0;
+	virtual int				GetScreenAspectRatio( void ) const = 0;
 
 	// allocate a renderWorld to be used for drawing
 	virtual idRenderWorld *	AllocRenderWorld( void ) = 0;
@@ -205,6 +263,8 @@ public:
 	virtual void			GetGLSettings( int& width, int& height ) = 0;
 	virtual void			PrintMemInfo( MemInfo_t *mi ) = 0;
 
+	virtual void			DrawScaledChar( int x, int y, int ch, const idMaterial *material, float scale ) = 0;
+	virtual void			DrawScaledStringExt( int x, int y, const char *string, const idVec4 &setColor, bool forceColor, const idMaterial *material, float scale ) = 0;  
 	virtual void			DrawSmallChar( int x, int y, int ch, const idMaterial *material ) = 0;
 	virtual void			DrawSmallStringExt( int x, int y, const char *string, const idVec4 &setColor, bool forceColor, const idMaterial *material ) = 0;
 	virtual void			DrawBigChar( int x, int y, int ch, const idMaterial *material ) = 0;
@@ -222,6 +282,7 @@ public:
 	// a frame cam consist of 2D drawing and potentially multiple 3D scenes
 	// window sizes are needed to convert SCREEN_WIDTH / SCREEN_HEIGHT values
 	virtual void			BeginFrame( int windowWidth, int windowHeight ) = 0;
+	virtual void			BeginFrame( int windowWidth, int windowHeight, int renderWidth, int renderHeight ) = 0;
 
 	// if the pointers are not NULL, timing info will be returned
 	virtual void			EndFrame( int *frontEndMsec, int *backEndMsec ) = 0;
@@ -250,12 +311,14 @@ public:
 	// to use the default tga loading code without having dimmed down areas in many places
 	virtual void			CaptureRenderToFile( const char *fileName, bool fixAlpha = false ) = 0;
 	virtual void			UnCrop() = 0;
-	virtual void			GetCardCaps( bool &oldCard, bool &nv10or20 ) = 0;
 
 	// the image has to be already loaded ( most straightforward way would be through a FindMaterial )
 	// texture filter / mipmapping / repeat won't be modified by the upload
 	// returns false if the image wasn't found
 	virtual bool			UploadImage( const char *imageName, const byte *data, int width, int height ) = 0;
+
+	// Get back end stats from previous frame.
+	virtual backEndStats_t GetBackEndStats() const = 0;
 };
 
 extern idRenderSystem *			renderSystem;

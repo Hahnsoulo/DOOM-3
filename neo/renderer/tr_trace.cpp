@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "ImmediateMode.h"
 
 //#define TEST_TRACE
 
@@ -283,7 +284,7 @@ localTrace_t R_LocalTrace( const idVec3 &start, const idVec3 &end, const float r
 RB_DrawExpandedTriangles
 =================
 */
-void RB_DrawExpandedTriangles( const srfTriangles_t *tri, const float radius, const idVec3 &vieworg ) {
+void RB_DrawExpandedTriangles( const srfTriangles_t *tri, const float radius, const idVec3 &vieworg, const idVec3 &color ) {
 	int i, j, k;
 	idVec3 dir[6], normal, point;
 
@@ -309,7 +310,9 @@ void RB_DrawExpandedTriangles( const srfTriangles_t *tri, const float radius, co
 		dir[1].Normalize();
 		dir[2].Normalize();
 
-		qglBegin( GL_LINE_LOOP );
+    fhImmediateMode im;
+    im.Color3fv(color.ToFloatPtr());
+		im.Begin( GL_LINE_LOOP );
 
 		for ( j = 0; j < 3; j++ ) {
 			k = ( j + 1 ) % 3;
@@ -324,22 +327,22 @@ void RB_DrawExpandedTriangles( const srfTriangles_t *tri, const float radius, co
 			dir[5].Normalize();
 
 			point = p[k] + dir[j] * radius;
-			qglVertex3f( point[0], point[1], point[2] );
+			im.Vertex3f( point[0], point[1], point[2] );
 
 			point = p[k] + dir[3] * radius;
-			qglVertex3f( point[0], point[1], point[2] );
+			im.Vertex3f( point[0], point[1], point[2] );
 
 			point = p[k] + dir[4] * radius;
-			qglVertex3f( point[0], point[1], point[2] );
+			im.Vertex3f( point[0], point[1], point[2] );
 
 			point = p[k] + dir[5] * radius;
-			qglVertex3f( point[0], point[1], point[2] );
+			im.Vertex3f( point[0], point[1], point[2] );
 
 			point = p[k] + dir[k] * radius;
-			qglVertex3f( point[0], point[1], point[2] );
+			im.Vertex3f( point[0], point[1], point[2] );
 		}
 
-		qglEnd();
+		im.End();
 	}
 }
 
@@ -374,10 +377,8 @@ void RB_ShowTrace( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	end = start + 4000 * backEnd.viewDef->renderView.viewaxis[0];
 
 	// check and draw the surfaces
-	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
-	GL_TexEnv( GL_MODULATE );
-
-	globalImages->whiteImage->Bind();
+	
+	globalImages->whiteImage->Bind(0);
 
 	// find how many are ambient
 	for ( i = 0 ; i < numDrawSurfs ; i++ ) {
@@ -397,31 +398,27 @@ void RB_ShowTrace( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 			continue;
 		}
 
-		qglLoadMatrixf( surf->space->modelViewMatrix );
+		GL_ModelViewMatrix.Load( surf->space->modelViewMatrix );
 
 		// highlight the surface
 		GL_State( GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA );
 
-		qglColor4f( 1, 0, 0, 0.25 );
-		RB_DrawElementsImmediate( tri );
+		RB_DrawElementsImmediate( tri, idVec4(1, 0, 0, 0.25f) );
 
 		// draw the bounding box
 		GL_State( GLS_DEPTHFUNC_ALWAYS );
-
-		qglColor4f( 1, 1, 1, 1 );
-		RB_DrawBounds( tri->bounds );
+		
+		RB_DrawBounds( tri->bounds, idVec3(1,1,1) );
 
 		if ( radius != 0.0f ) {
-			// draw the expanded triangles
-			qglColor4f( 0.5f, 0.5f, 1.0f, 1.0f );
-			RB_DrawExpandedTriangles( tri, radius, localStart );
+			// draw the expanded triangles			
+			RB_DrawExpandedTriangles( tri, radius, localStart, idVec3(0.5f, 0.5f, 0.5f) );
 		}
 
 		// check the exact surfaces
 		hit = R_LocalTrace( localStart, localEnd, radius, tri );
 		if ( hit.fraction < 1.0 ) {
-			qglColor4f( 1, 1, 1, 1 );
-			RB_DrawBounds( idBounds( hit.point ).Expand( 1 ) );
+			RB_DrawBounds( idBounds( hit.point ).Expand( 1 ), idVec3(1,1,1) );
 		}
 	}
 }

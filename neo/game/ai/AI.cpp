@@ -1118,6 +1118,10 @@ void idAI::Think( void ) {
 				PlayChatter();
 				CheckBlink();
 				break;
+
+			case NUM_MOVETYPES:
+				//ignore
+				break;
 			}
 		}
 
@@ -2145,7 +2149,7 @@ bool idAI::NewWanderDir( const idVec3 &dest ) {
 	}
 
 	// try other directions
-	if ( ( gameLocal.random.RandomInt() & 1 ) || abs( deltay ) > abs( deltax ) ) {
+	if ( ( gameLocal.random.RandomInt() & 1 ) || fabs( deltay ) > fabs( deltax ) ) {
 		tdir = d[ 1 ];
 		d[ 1 ] = d[ 2 ];
 		d[ 2 ] = tdir;
@@ -2225,6 +2229,9 @@ bool idAI::GetMovePos( idVec3 &seekPos ) {
 	case MOVE_SLIDE_TO_POSITION :
 		seekPos = org;
 		return false;
+		break;
+
+	default:
 		break;
 	}
 
@@ -4495,6 +4502,7 @@ void idAI::TriggerWeaponEffects( const idVec3 &muzzle ) {
 		GetJointWorldTransform( flashJointWorld, gameLocal.time, org, axis );
 
 		if ( worldMuzzleFlash.lightRadius.x > 0.0f ) {
+			worldMuzzleFlash.smLodBias = g_muzzleFlashLightLodBias.GetInteger();
 			worldMuzzleFlash.axis = axis;
 			worldMuzzleFlash.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC( gameLocal.time );
 			if ( worldMuzzleFlashHandle != - 1 ) {

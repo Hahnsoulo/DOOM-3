@@ -103,7 +103,8 @@ If you have questions concerning this license or the applicable additional terms
 // Linux
 #ifdef __linux__
 
-#ifdef __i386__
+#if defined(__i386__) || defined(__amd64__)
+  static_assert(sizeof(void*) == 4, "need 32bit pointers");
 	#define	BUILD_STRING				"linux-x86"
 	#define BUILD_OS_ID					2
 	#define CPUSTRING					"x86"
@@ -115,7 +116,7 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 #define _alloca							alloca
-#define _alloca16( x )					((void *)((((int)alloca( (x)+15 )) + 15) & ~15))
+#define _alloca16( x )					((void *)((((std::ptrdiff_t)alloca( (x)+15 )) + 15) & ~15))
 
 #define ALIGN16( x )					x
 #define PACKED							__attribute__((packed))
@@ -232,6 +233,7 @@ typedef struct sysMemoryStats_s {
 } sysMemoryStats_t;
 
 typedef unsigned long address_t;
+typedef unsigned long long uint64;
 
 template<class type> class idList;		// for Sys_ListFiles
 
@@ -262,9 +264,10 @@ void			Sys_DebugVPrintf( const char *fmt, va_list arg );
 // NOTE: due to SYS_MINSLEEP this is very bad portability karma, and should be completely removed
 void			Sys_Sleep( int msec );
 
-// Sys_Milliseconds should only be used for profiling purposes,
+// Sys_Milliseconds and Sys_Microseconds should only be used for profiling purposes,
 // any game related timing information should come from event timestamps
 int				Sys_Milliseconds( void );
+uint64          Sys_Microseconds();
 
 // for accurate performance testing
 double			Sys_GetClockTicks( void );
@@ -375,6 +378,9 @@ const char *	Sys_DefaultCDPath( void );
 const char *	Sys_DefaultBasePath( void );
 const char *	Sys_DefaultSavePath( void );
 const char *	Sys_EXEPath( void );
+const char *	Sys_Cwd( void );
+bool            Sys_IsFile( const char* path );
+bool            Sys_IsDirectory( const char* path );
 
 // use fs_debug to verbose Sys_ListFiles
 // returns -1 if directory was not found (the list is cleared)

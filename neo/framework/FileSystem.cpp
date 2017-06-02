@@ -3594,11 +3594,7 @@ size_t idFileSystemLocal::CurlWriteFunction( void *ptr, size_t size, size_t nmem
 	if ( !bgl->f ) {
 		return size * nmemb;
 	}
-	#ifdef _WIN32
-		return _write( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr()->_file, ptr, size * nmemb );
-	#else
-		return fwrite( ptr, size, nmemb, static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr() );
-	#endif
+	return fwrite( ptr, size, nmemb, static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr() );
 }
 
 /*
@@ -3640,7 +3636,7 @@ dword BackgroundDownloadThread( void *parms ) {
 
 		if ( bgl->opcode == DLTYPE_FILE ) {
 			// use the low level read function, because fread may allocate memory
-			#if defined(WIN32)
+			#if defined(WIN32) && 0
 				_read( static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr()->_file, bgl->file.buffer, bgl->file.length );
 			#else
 				fread(  bgl->file.buffer, bgl->file.length, 1, static_cast<idFile_Permanent*>(bgl->f)->GetFilePtr() );
@@ -3873,6 +3869,8 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	sys->DLL_GetFileName( name, dllName, MAX_OSPATH );
 	dllHash = HashFileName( dllName );
 
+	common->Printf("DLL file name: %s\n", dllName);
+
 #if ID_FAKE_PURE
 	if ( 1 ) {
 #else
@@ -3882,7 +3880,17 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 		dllPath = Sys_EXEPath( );
 		dllPath.StripFilename( );
 		dllPath.AppendPath( dllName );
+		
+		common->Printf("look for DLL next to executable: %s\n", dllPath.c_str());
 		dllFile = OpenExplicitFileRead( dllPath );
+
+        if(!dllFile) {
+            dllPath = Sys_EXEPath( );
+            dllPath.StripFilename( );
+            dllPath.AppendPath( "../lib" );
+            dllPath.AppendPath( dllName );
+            dllFile = OpenExplicitFileRead( dllPath );
+        }
 	}
 	if ( !dllFile ) {
 		if ( !serverPaks.Num() ) {

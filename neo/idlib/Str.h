@@ -37,42 +37,14 @@ If you have questions concerning this license or the applicable additional terms
 ===============================================================================
 */
 
-// these library functions should not be used for cross platform compatibility
-#define strcmp			idStr::Cmp		// use_idStr_Cmp
-#define strncmp			use_idStr_Cmpn
-
-#if defined( StrCmpN )
-#undef StrCmpN
+#ifdef __linux__
+#define stricmp strcasecmp
+#define strnicmp strncasecmp
 #endif
-#define StrCmpN			use_idStr_Cmpn
-
-#if defined( strcmpi )
-#undef strcmpi
-#endif
-#define strcmpi			use_idStr_Icmp
-
-#if defined( StrCmpI )
-#undef StrCmpI
-#endif
-#define StrCmpI			use_idStr_Icmp
-
-#if defined( StrCmpNI )
-#undef StrCmpNI
-#endif
-#define StrCmpNI		use_idStr_Icmpn
-
-#define stricmp			idStr::Icmp		// use_idStr_Icmp
-#define _stricmp		use_idStr_Icmp
-#define strcasecmp		use_idStr_Icmp
-#define strnicmp		use_idStr_Icmpn
-#define _strnicmp		use_idStr_Icmpn
-#define _memicmp		use_idStr_Icmpn
-#define snprintf		use_idStr_snPrintf
-#define _snprintf		use_idStr_snPrintf
-#define vsnprintf		use_idStr_vsnPrintf
-#define _vsnprintf		use_idStr_vsnPrintf
 
 class idVec4;
+
+
 
 #ifndef FILE_HASH_SIZE
 #define FILE_HASH_SIZE		1024
@@ -202,6 +174,8 @@ public:
 	bool				IsColor( void ) const;
 	bool				HasLower( void ) const;
 	bool				HasUpper( void ) const;
+	bool                EndsWith(const char* suffix) const;
+	bool                StartsWith(const char* prefix) const;
 	int					LengthWithoutColors( void ) const;
 	idStr &				RemoveColors( void );
 	void				CapLength( int );
@@ -238,6 +212,7 @@ public:
 	idStr &				DefaultFileExtension( const char *extension );	// if there's no file extension use the default
 	idStr &				DefaultPath( const char *basepath );			// if there's no path use the default
 	void				AppendPath( const char *text );					// append a partial path
+	void				AppendPath( const char *text, int length );		// append a partial path
 	idStr &				StripFilename( void );							// remove the filename from a path
 	idStr &				StripPath( void );								// remove the path from the filename
 	void				ExtractFilePath( idStr &dest ) const;			// copy the file path to another string
@@ -290,6 +265,7 @@ public:
 	static bool			CharIsNumeric( int c );
 	static bool			CharIsNewLine( char c );
 	static bool			CharIsTab( char c );
+	static bool			CharIsWhitespace( char c );
 	static int			ColorIndex( int c );
 	static idVec4 &		ColorForIndex( int i );
 
@@ -846,6 +822,25 @@ ID_INLINE bool idStr::HasUpper( void ) const {
 	return idStr::HasUpper( data );
 }
 
+ID_INLINE bool idStr::EndsWith(const char* suffix) const {
+	int suffixLen = strlen(suffix);
+	if (this->len < suffixLen) {
+		return false;
+	}
+
+	return strncmp(c_str() + (this->len - suffixLen), suffix, suffixLen) == 0;
+}
+
+ID_INLINE bool idStr::StartsWith(const char* prefix) const {
+	int prefixLen = strlen(prefix);
+	if (this->len < prefixLen) {
+		return false;
+	}
+
+	return strncmp(c_str(), prefix, prefixLen) == 0;
+}
+
+
 ID_INLINE idStr &idStr::RemoveColors( void ) {
 	idStr::RemoveColors( data );
 	len = Length( data );
@@ -1032,6 +1027,11 @@ ID_INLINE bool idStr::CharIsNewLine( char c ) {
 ID_INLINE bool idStr::CharIsTab( char c ) {
 	return ( c == '\t' );
 }
+
+ID_INLINE bool idStr::CharIsWhitespace( char c ) {
+	return (c == '\t') || (c == ' ');
+}
+
 
 ID_INLINE int idStr::ColorIndex( int c ) {
 	return ( c & 15 );

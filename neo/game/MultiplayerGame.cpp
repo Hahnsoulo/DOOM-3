@@ -935,7 +935,7 @@ void idMultiplayerGame::PlayerStats( int clientNum, char *data, const int len ) 
 		return;
 	}
 
-	idStr::snPrintf( data, len, "team=%d score=%ld tks=%ld", team, playerState[ clientNum ].fragCount, playerState[ clientNum ].teamFragCount );
+	idStr::snPrintf( data, len, "team=%d score=%d tks=%d", team, playerState[ clientNum ].fragCount, playerState[ clientNum ].teamFragCount );
 
 	return;
 
@@ -1240,6 +1240,12 @@ void idMultiplayerGame::ExecuteVote( void ) {
 		case VOTE_NEXTMAP:
 			cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "serverNextMap\n" );
 			break;
+		case VOTE_COUNT:
+			//ignore
+			break;
+		case VOTE_NONE:
+			//ignore
+			break;
 	}
 }
 
@@ -1449,6 +1455,12 @@ void idMultiplayerGame::Run() {
 			}
 			break;
 		}
+		case INACTIVE:
+			//FIXME(johl): anythning to do here?
+			break;
+		case STATE_COUNT:
+			//ignore
+			break;
 	}
 }
 

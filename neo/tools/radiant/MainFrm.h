@@ -107,7 +107,6 @@ public:
 	void UpdateWindows(int nBits);
 	void SetStatusText(int nPane, const char* pText);
 	void UpdateStatusText();
-	void SetWindowStyle(int nStyle);
 	bool GetNurbMode() {
 		return nurbMode;
 	}
@@ -176,6 +175,7 @@ public:
 	// these are public so i can easily reflect messages
 	// from child windows..
 	//{{AFX_MSG(CMainFrame)
+	afx_msg BOOL OnEraseBkgnd(CDC* pDC);
 	afx_msg void OnBSPStatus(UINT wParam, long lParam);
 	afx_msg void OnBSPDone(UINT wParam, long lParam);
 	afx_msg void OnParentNotify(UINT message, LPARAM lParam);

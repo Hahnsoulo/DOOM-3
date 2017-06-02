@@ -52,6 +52,7 @@ idRenderEntityLocal::idRenderEntityLocal() {
 	firstInteraction		= NULL;
 	lastInteraction			= NULL;
 	needsPortalSky			= false;
+	staticOccluderModel		= NULL;
 }
 
 void idRenderEntityLocal::FreeRenderEntity() {
@@ -81,6 +82,7 @@ idRenderLightLocal::idRenderLightLocal() {
 	memset( &parms, 0, sizeof( parms ) );
 	memset( modelMatrix, 0, sizeof( modelMatrix ) );
 	memset( shadowFrustums, 0, sizeof( shadowFrustums ) );
+	memset( shadowMapFrustums, 0, sizeof( shadowMapFrustums ) );
 	memset( lightProject, 0, sizeof( lightProject ) );
 	memset( frustum, 0, sizeof( frustum ) );
 	memset( frustumWindings, 0, sizeof( frustumWindings ) );
@@ -96,6 +98,7 @@ idRenderLightLocal::idRenderLightLocal() {
 	globalLightOrigin		= vec3_zero;
 	frustumTris				= NULL;
 	numShadowFrustums		= 0;
+	numShadowMapFrustums	= 0;
 	viewCount				= 0;
 	viewLight				= NULL;
 	references				= NULL;
@@ -114,4 +117,69 @@ void idRenderLightLocal::ForceUpdate() {
 }
 int idRenderLightLocal::GetIndex() {
 	return index;
+}
+
+
+shadowMode_t idRenderLightLocal::ShadowMode() const {
+	if (r_shadows.GetInteger() == 0)
+		return shadowMode_t::NoShadows;
+
+	if (parms.noShadows)
+		return shadowMode_t::NoShadows;	
+
+	if (parms.shadowMode != shadowMode_t::Default)
+		return parms.shadowMode;
+
+	if (r_shadows.GetInteger() == 1)
+		return shadowMode_t::StencilShadow;
+
+	return shadowMode_t::ShadowMap;
+}
+
+float idRenderLightLocal::ShadowSoftness() const {
+	if (parms.shadowMode == shadowMode_t::Default) {
+		return r_smSoftness.GetFloat();
+	}
+
+	return parms.shadowSoftness;
+}
+
+float idRenderLightLocal::ShadowBrightness() const {
+	if (parms.shadowMode == shadowMode_t::Default) {
+		return r_smBrightness.GetFloat();
+	}
+
+	return parms.shadowBrightness;
+}
+
+float idRenderLightLocal::ShadowPolygonOffsetFactor() const {
+	if (parms.shadowMode == shadowMode_t::Default) {
+		return r_smPolyOffsetFactor.GetFloat();
+	}
+
+	return parms.shadowPolygonOffsetFactor;
+}
+
+float idRenderLightLocal::ShadowPolygonOffsetBias() const {
+	if (parms.shadowMode == shadowMode_t::Default) {
+		return r_smPolyOffsetBias.GetFloat();
+	}
+
+	return parms.shadowPolygonOffsetBias;
+}
+
+
+//TODO(johl): 'max' undefined on linux... should replace all usage of max macro
+//(included via windows.h) by proper max function (std::max?)
+#ifndef max
+#define max(a,b) ((a)>(b)?(a):(b))
+#endif
+
+float idRenderLightLocal::GetMaximumCenterToEdgeDistance() const {	
+	const idVec3 halfSize = parms.lightRadius * 0.5;
+
+	const float l1 = (-halfSize - parms.lightCenter).Length();
+	const float l2 = (halfSize - parms.lightCenter).Length();
+
+	return max(l1, l2);
 }

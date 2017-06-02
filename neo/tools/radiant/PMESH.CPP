@@ -32,6 +32,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "qe3.h"
 #include "DialogInfo.h"
 #include "CapDialog.h"
+#include "../../renderer/ImmediateMode.h"
 
 // externs
 extern void MemFile_fprintf( CMemFile *pMemFile,const char *pText,... );
@@ -41,7 +42,116 @@ void _Write3DMatrix( CMemFile *f,int y,int x,int z,float *m );
 extern void SamplePatch( float ctrl[3][3][5],int baseCol,int baseRow,int width,int horzSub,int vertSub,idDrawVert *outVerts,idDrawVert *drawVerts );
 patchMesh_t *Patch_GenerateGeneric( int width,int height,int orientation,const idVec3 &mins,const idVec3 &maxs );
 
+static void UpdatePatchGeometry( patchMesh_t* pm ) {
+  if(pm->wireframeVerts && pm->triangleVerts)
+    return;
 
+  if(pm->wireframeVerts) {
+    delete[] pm->wireframeVerts;
+    pm->wireframeVerts = nullptr;
+    pm->wireframeVertNum = 0;
+  }
+
+  if (pm->triangleVerts) {
+    delete[] pm->triangleVerts;
+    pm->triangleVerts = nullptr;
+    pm->triangleVertsNum = 0;
+  }
+
+  //FIXME: finish consolidating all the patch crap
+  idSurface_Patch	cp(pm->width * 6, pm->height * 6);
+  cp.SetSize(pm->width, pm->height);
+  for (int i = 0; i < pm->width; i++) {
+    for (int j = 0; j < pm->height; j++) {
+      cp[j * cp.GetWidth() + i].xyz = pm->ctrl(i, j).xyz;
+      cp[j * cp.GetWidth() + i].st = pm->ctrl(i, j).st;
+    }
+  }
+
+  if (pm->explicitSubdivisions) {
+    cp.SubdivideExplicit(pm->horzSubdivisions, pm->vertSubdivisions, true);
+  }
+  else {
+    cp.Subdivide(DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_LENGTH, true);
+  }
+
+  const int	width = cp.GetWidth();
+  const int	height = cp.GetHeight();
+
+  pm->wireframeVerts = new idVec3[width * height * 6];
+  int n = 0;
+  for (int i = 0; i < width - 1; i++) {
+    idVec3 p1, p2;
+
+    for (int j = 0; j < height; j++) {
+      const int v1 = j * width + i;
+      const int v2 = v1 + 1;
+
+      pm->wireframeVerts[n++] = cp[v2].xyz;
+      pm->wireframeVerts[n++] = cp[v1].xyz;
+
+      if (j > 0) {
+        pm->wireframeVerts[n++] = p1;
+        pm->wireframeVerts[n++] = cp[v1].xyz;
+
+        pm->wireframeVerts[n++] = p2;
+        pm->wireframeVerts[n++] = cp[v2].xyz;
+      }
+
+      p1 = cp[v1].xyz;
+      p2 = cp[v2].xyz;
+    }
+  }
+  pm->wireframeVertNum = n;
+
+
+  pm->triangleVerts = new fhSimpleVert[width * height * 6];
+  n = 0;
+  for (int i = 0; i < width - 1; i++) {
+    fhSimpleVert prev[2];
+    for (int j = 0; j < height; j++) {
+      // v1-v2-v3-v4 makes a quad						
+      const int v1 = j * width + i;
+      const int v2 = v1 + 1;
+
+      fhSimpleVert verts[2];
+      verts[0].xyz = cp[v2].xyz;
+      verts[1].xyz = cp[v1].xyz;
+
+      verts[0].st = cp[v2].st;
+      verts[1].st = cp[v1].st;
+/*
+      if (bShade) {
+        float f = ShadeForNormal(cp[v2].normal);
+        verts[0].SetColor(idVec3(f, f, f));
+
+        f = ShadeForNormal(cp[v1].normal);
+        verts[1].SetColor(idVec3(f, f, f));
+      }
+      else */
+      {
+        verts[0].SetColor(idVec3(1, 1, 1));
+        verts[1].SetColor(idVec3(1, 1, 1));
+      }
+
+      if (j > 0) {
+        pm->triangleVerts[n + 0] = prev[1];
+        pm->triangleVerts[n + 1] = verts[0];
+        pm->triangleVerts[n + 2] = prev[0];
+
+        pm->triangleVerts[n + 3] = prev[1];
+        pm->triangleVerts[n + 4] = verts[1];
+        pm->triangleVerts[n + 5] = verts[0];
+
+        n += 6;
+      }
+
+      prev[0] = verts[0];
+      prev[1] = verts[1];
+    }
+  }
+  pm->triangleVertsNum = n;
+}
 
 patchMesh_t * MakeNewPatch( int width,int height ) {
 	patchMesh_t	*pm	= reinterpret_cast< patchMesh_t*>(Mem_ClearedAlloc(sizeof(patchMesh_t)));
@@ -51,6 +161,10 @@ patchMesh_t * MakeNewPatch( int width,int height ) {
 	pm->width = width;
 	pm->height = height;
 	pm->verts = reinterpret_cast< idDrawVert*>(Mem_ClearedAlloc(sizeof(idDrawVert) * width * height));
+  pm->wireframeVerts = nullptr;
+  pm->wireframeVertNum = 0;
+  pm->triangleVerts = nullptr;
+  pm->triangleVertsNum = 0;
 	//pm->ctrl = reinterpret_cast<idDrawVert*>(Mem_ClearedAlloc(sizeof(idDrawVert) * width * height));
 	//pm->ctrl = &pm->verts;
 	return pm;
@@ -779,9 +893,17 @@ void Patch_MeshNormals( patchMesh_t *in ) {
 
 void Patch_MakeDirty( patchMesh_t *p ) {
 	assert(p);
-	p->nListID = -1;
-	p->nListIDCam = -1;
-	p->nListSelected = -1;
+  if(p->wireframeVerts) {
+    delete[] p->wireframeVerts;
+    p->wireframeVerts = nullptr;
+    p->wireframeVertNum = 0;
+  }
+
+  if(p->triangleVerts) {
+    delete[] p->triangleVerts;
+    p->triangleVerts = nullptr;
+    p->triangleVertsNum = 0;
+  }
 }
 
 
@@ -936,8 +1058,7 @@ brush_t * AddBrushForPatch( patchMesh_t *pm,bool bLinkToWorld ) {
 	pm->pSymbiot = b;
 	pm->bSelected = false;
 	pm->bOverlay = false;
-	pm->nListID = -1;
-	pm->nListIDCam = -1;
+  Patch_MakeDirty(pm);
 
 	if ( bLinkToWorld ) {
 		Brush_AddToList(b, &active_brushes);
@@ -1496,7 +1617,7 @@ void Patch_CapCurrent( bool bInvertedBevel,bool bInvertedEndcap ) {
 			eclass_t*pecNew	= Eclass_ForName("func_static", false);
 			if ( pecNew ) {
 				entity_t*e	= Entity_Create(pecNew);
-				SetKeyValue(e, "type", "patchCapped");
+				e->SetKeyValue("type", "patchCapped");
 			}
 		}
 	}
@@ -2199,285 +2320,228 @@ void Patch_AdjustSubdivisions( float hadj,float vadj ) {
 
 extern float ShadeForNormal( idVec3 normal );
 
+void DrawPatchMeshHandles(patchMesh_t *pm) {
+  idVec3	*pSelectedPoints[256];
+  int		nIndex = 0;
+
+  bool	bOverlay	= pm->bOverlay;
+
+  // FIXME: this bend painting code needs to be rolled up significantly as it is a mess right now
+  glPointSize(6);
+  fhImmediateMode im;
+  im.Begin(GL_POINTS);
+
+  if (pm->bSelected && (g_qeglobals.d_select_mode == sel_curvepoint || g_qeglobals.d_select_mode == sel_area || g_bPatchBendMode || g_bPatchInsertMode)) {
+    bOverlay = false;
+
+    // bending or inserting
+    if (g_bPatchBendMode || g_bPatchInsertMode) {
+
+      if (g_bPatchAxisOnRow) {
+        im.Color3f(1, 0, 1);
+        for (int i = 0; i < pm->width; i++) {
+          im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(i, g_nPatchAxisIndex).xyz));
+        }
+
+        // could do all of this in one loop but it was pretty messy
+        if (g_bPatchInsertMode) {
+          im.Color3f(0, 0, 1);
+          for (int i = 0; i < pm->width; i++) {
+            im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(i, g_nPatchAxisIndex).xyz));
+            im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(i, g_nPatchAxisIndex + 1).xyz));
+          }
+        }
+        else {
+          if (g_nPatchBendState == BEND_SELECT_EDGE || g_nPatchBendState == BEND_BENDIT || g_nPatchBendState == BEND_SELECT_ORIGIN) {
+            im.Color3f(0, 0, 1);
+            if (g_nPatchBendState == BEND_SELECT_ORIGIN) {
+              im.Vertex3fv(g_vBendOrigin.ToFloatPtr());
+            }
+            else {
+              for (int i = 0; i < pm->width; i++) {
+                if (g_bPatchLowerEdge) {
+                  for (int j = 0; j < g_nPatchAxisIndex; j++) {
+                    im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(i, j).xyz));
+                  }
+                }
+                else {
+                  for (int j = pm->height - 1; j > g_nPatchAxisIndex; j--) {
+                    im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(i, j).xyz));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      else {
+        im.Color3f(1, 0, 1);
+        for (int i = 0; i < pm->height; i++) {
+          im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(g_nPatchAxisIndex, i).xyz));
+        }
+
+        // could do all of this in one loop but it was pretty messy
+        if (g_bPatchInsertMode) {
+          im.Color3f(0, 0, 1);
+          for (int i = 0; i < pm->height; i++) {
+            im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(g_nPatchAxisIndex, i).xyz));
+            im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(g_nPatchAxisIndex + 1, i).xyz));
+          }
+        }
+        else {
+          if (g_nPatchBendState == BEND_SELECT_EDGE || g_nPatchBendState == BEND_BENDIT || g_nPatchBendState == BEND_SELECT_ORIGIN) {
+            im.Color3f(0, 0, 1);
+            for (int i = 0; i < pm->height; i++) {
+              if (g_nPatchBendState == BEND_SELECT_ORIGIN) {
+                im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(g_nBendOriginIndex, i).xyz));
+              }
+              else {
+                if (g_bPatchLowerEdge) {
+                  for (int j = 0; j < g_nPatchAxisIndex; j++) {
+                    im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(j, i).xyz));
+                  }
+                }
+                else {
+                  for (int j = pm->width - 1; j > g_nPatchAxisIndex; j--) {
+                    im.Vertex3fv(reinterpret_cast<float(*)>(&pm->ctrl(j, i).xyz));
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    else {
+      for (int i = 0; i < pm->width; i++) {
+        for (int j = 0; j < pm->height; j++) {
+          // FIXME: need to not do loop lookups inside here
+          int	n = PointValueInMoveList(pm->ctrl(i, j).xyz);
+          if (n >= 0) {
+            pSelectedPoints[nIndex++] = &pm->ctrl(i, j).xyz;
+          }
+
+          if (i & 0x01 || j & 0x01) {
+            im.Color3f(1, 0, 1);
+          }
+          else {
+            im.Color3f(0, 1, 0);
+          }
+          im.Vertex3fv(pm->ctrl(i, j).xyz.ToFloatPtr());
+        }
+      }
+    }
+
+    if (nIndex > 0) {
+      im.Color3f(0, 0, 1);
+      while (nIndex-- > 0) {
+        im.Vertex3fv((*pSelectedPoints[nIndex]).ToFloatPtr());
+      }
+    }
+  }
+
+  if (bOverlay) {
+    im.Color3f(0.5, 0.5, 0.5);
+    for (int i = 0; i < pm->width; i++) {
+      for (int j = 0; j < pm->height; j++) {
+        if (i & 0x01 || j & 0x01) {
+          im.Color3f(0.5, 0, 0.5);
+        }
+        else {
+          im.Color3f(0, 0.5, 0);
+        }
+        im.Vertex3fv(pm->ctrl(i, j).xyz.ToFloatPtr());
+      }
+    }
+  }
+
+  im.End();
+}
+
+
+
 /*
 =================
 DrawPatchMesh
 =================
 */
 //FIXME: this routine needs to be reorganized.. should be about 1/4 the size and complexity
-void DrawPatchMesh( patchMesh_t *pm,bool bPoints,int *list,bool bShade = false ) {
-	int		i, j;
+void DrawPatchMeshWireframe(patchMesh_t *pm, const idVec3& color) {
+  UpdatePatchGeometry(pm);
 
-	bool	bOverlay	= pm->bOverlay;
-	int		nDrawMode	= g_pParentWnd->GetCamera()->Camera().draw_mode;
-
-	// patches use two display lists, one for camera one for xy
-	if ( *list <= 0 ) {
-		if ( *list <= 0 ) {
-			*list = qglGenLists(1);
-		}
-
-		if ( *list > 0 ) {
-			qglNewList(*list, GL_COMPILE_AND_EXECUTE);
-		}
-
-		//FIXME: finish consolidating all the patch crap
-		idSurface_Patch	*cp	= new idSurface_Patch(pm->width * 6, pm->height * 6);
-		cp->SetSize(pm->width, pm->height);
-		for ( i = 0; i < pm->width; i++ ) {
-			for ( j = 0; j < pm->height; j++ ) {
-				(*cp)[j * cp->GetWidth() + i].xyz = pm->ctrl(i, j).xyz;
-				(*cp)[j * cp->GetWidth() + i].st = pm->ctrl(i, j).st;
-			}
-		}
-
-		if ( pm->explicitSubdivisions ) {
-			cp->SubdivideExplicit(pm->horzSubdivisions, pm->vertSubdivisions, true);
-		} else {
-			cp->Subdivide(DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_LENGTH, true);
-		}
-
-
-		int			width	= cp->GetWidth();
-		int			height	= cp->GetHeight();
-		/*
-					for (i = 0; i < width; i++) {
-						for (j = 0; j < height; j++) {
-							qglBegin(GL_POINTS);
-							int index = j * width + i;
-							qglVertex3fv((*cp)[index].xyz);
-							qglEnd();
-							char msg[64];
-							sprintf(msg, "(%0.3f, %0.3f, %0.3f)(%0.3f, %0.3f)", (*cp)[index].xyz.x, (*cp)[index].xyz.y, (*cp)[index].xyz.z, (*cp)[index].st.x, (*cp)[index].st.y);
-							qglRasterPos3f((*cp)[index].xyz.x + 1, (*cp)[index].xyz.y + 1, (*cp)[index].xyz.z + 1);
-							qglCallLists (strlen(msg), GL_UNSIGNED_BYTE, msg);
-						}
-					}
-			*/
-#ifdef TEST_SURFACE_CLIPPING
-		int			n;
-		idSurface	*surf	= cp;
-		idSurface	*front, *back;
-
-		surf->Split(idPlane(1, 0, 0, 0), 0.1f, &front, &back);
-		if ( front && back ) {
-			front->TranslateSelf(idVec3(10, 10, 10));
-			(*front) += (*back);
-			surf = front;
-		} else {
-			surf = cp;
-		}
-		//		surf->ClipInPlace( idPlane( 1, 0, 0, 0 ), 0.1f, true );
-
-		qglBegin(GL_TRIANGLES);
-		for ( i = 0; i < surf->GetNumIndexes(); i += 3 ) {
-			n = surf->GetIndexes()[i + 0];
-			qglTexCoord2fv((*surf)[n].st.ToFloatPtr());
-			qglVertex3fv((*surf)[n].xyz.ToFloatPtr());
-			n = surf->GetIndexes()[i + 1];
-			qglTexCoord2fv((*surf)[n].st.ToFloatPtr());
-			qglVertex3fv((*surf)[n].xyz.ToFloatPtr());
-			n = surf->GetIndexes()[i + 2];
-			qglTexCoord2fv((*surf)[n].st.ToFloatPtr());
-			qglVertex3fv((*surf)[n].xyz.ToFloatPtr());
-		}
-		qglEnd();
-
-		if ( front ) {
-			delete front;
-		}
-		if ( back ) {
-			delete back;
-		}
-#else
-		for ( i = 0 ; i < width - 1; i++ ) {
-			qglBegin(GL_QUAD_STRIP);
-			for ( j = 0 ; j < height; j++ ) {
-				// v1-v2-v3-v4 makes a quad
-				int		v1, v2;
-				float	f;
-				v1 = j * width + i;
-				v2 = v1 + 1;
-				if ( bShade ) {
-					f = ShadeForNormal((*cp)[v2].normal);
-					qglColor3f(f, f, f);
-				}
-				qglTexCoord2fv((*cp)[v2].st.ToFloatPtr());
-				qglVertex3fv((*cp)[v2].xyz.ToFloatPtr());
-				if ( bShade ) {
-					f = ShadeForNormal((*cp)[v1].normal);
-					qglColor3f(f, f, f);
-				}
-				qglTexCoord2fv((*cp)[v1].st.ToFloatPtr());
-				qglVertex3fv((*cp)[v1].xyz.ToFloatPtr());
-			}
-			qglEnd();
-		}
-#endif
-
-		if ( list == &pm->nListSelected ) {
-			globalImages->BindNull();
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-			qglColor3f(1.0f, 1.0f, 1.0f);
-			for ( i = 0 ; i < width - 1; i++ ) {
-				qglBegin(GL_QUAD_STRIP);
-				for ( j = 0 ; j < height; j++ ) {
-					int	v1, v2;
-					v1 = j * width + i;
-					v2 = v1 + 1;
-					qglVertex3fv((*cp)[v2].xyz.ToFloatPtr());
-					qglVertex3fv((*cp)[v1].xyz.ToFloatPtr());
-				}
-				qglEnd();
-			}
-		}
-
-		delete cp;
-
-		if ( *list > 0 ) {
-			qglEndList();
-		}
-	} else {
-		qglCallList(*list);
-	}
-
-	idVec3	*pSelectedPoints[256];
-	int		nIndex	= 0;
-
-	// FIXME: this bend painting code needs to be rolled up significantly as it is a mess right now
-	if ( bPoints && (g_qeglobals.d_select_mode == sel_curvepoint || g_qeglobals.d_select_mode == sel_area || g_bPatchBendMode || g_bPatchInsertMode) ) {
-		bOverlay = false;
-
-		// bending or inserting
-		if ( g_bPatchBendMode || g_bPatchInsertMode ) {
-			qglPointSize(6);
-			if ( g_bPatchAxisOnRow ) {
-				qglColor3f(1, 0, 1);
-				qglBegin(GL_POINTS);
-				for ( i = 0; i < pm->width; i++ ) {
-					qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(i, g_nPatchAxisIndex).xyz));
-				}
-				qglEnd();
-
-				// could do all of this in one loop but it was pretty messy
-				if ( g_bPatchInsertMode ) {
-					qglColor3f(0, 0, 1);
-					qglBegin(GL_POINTS);
-					for ( i = 0; i < pm->width; i++ ) {
-						qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(i, g_nPatchAxisIndex).xyz));
-						qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(i, g_nPatchAxisIndex + 1).xyz));
-					}
-					qglEnd();
-				} else {
-					if ( g_nPatchBendState == BEND_SELECT_EDGE || g_nPatchBendState == BEND_BENDIT || g_nPatchBendState == BEND_SELECT_ORIGIN ) {
-						qglColor3f(0, 0, 1);
-						qglBegin(GL_POINTS);
-						if ( g_nPatchBendState == BEND_SELECT_ORIGIN ) {
-							qglVertex3fv(g_vBendOrigin.ToFloatPtr());
-						} else {
-							for ( i = 0; i < pm->width; i++ ) {
-								if ( g_bPatchLowerEdge ) {
-									for ( j = 0; j < g_nPatchAxisIndex; j++ ) {
-										qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(i, j).xyz));
-									}
-								} else {
-									for ( j = pm->height - 1; j > g_nPatchAxisIndex; j-- ) {
-										qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(i, j).xyz));
-									}
-								}
-							}
-						}
-						qglEnd();
-					}
-				}
-			} else {
-				qglColor3f(1, 0, 1);
-				qglBegin(GL_POINTS);
-				for ( i = 0; i < pm->height; i++ ) {
-					qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(g_nPatchAxisIndex, i).xyz));
-				}
-				qglEnd();
-
-				// could do all of this in one loop but it was pretty messy
-				if ( g_bPatchInsertMode ) {
-					qglColor3f(0, 0, 1);
-					qglBegin(GL_POINTS);
-					for ( i = 0; i < pm->height; i++ ) {
-						qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(g_nPatchAxisIndex, i).xyz));
-						qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(g_nPatchAxisIndex + 1, i).xyz));
-					}
-					qglEnd();
-				} else {
-					if ( g_nPatchBendState == BEND_SELECT_EDGE || g_nPatchBendState == BEND_BENDIT || g_nPatchBendState == BEND_SELECT_ORIGIN ) {
-						qglColor3f(0, 0, 1);
-						qglBegin(GL_POINTS);
-						for ( i = 0; i < pm->height; i++ ) {
-							if ( g_nPatchBendState == BEND_SELECT_ORIGIN ) {
-								qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(g_nBendOriginIndex, i).xyz));
-							} else {
-								if ( g_bPatchLowerEdge ) {
-									for ( j = 0; j < g_nPatchAxisIndex; j++ ) {
-										qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(j, i).xyz));
-									}
-								} else {
-									for ( j = pm->width - 1; j > g_nPatchAxisIndex; j-- ) {
-										qglVertex3fv(reinterpret_cast< float(*)>(&pm->ctrl(j, i).xyz));
-									}
-								}
-							}
-						}
-						qglEnd();
-					}
-				}
-			}
-		} else {
-			qglPointSize(6);
-			for ( i = 0 ; i < pm->width ; i++ ) {
-				for ( j = 0 ; j < pm->height ; j++ ) {
-					qglBegin(GL_POINTS);
-					// FIXME: need to not do loop lookups inside here
-					int	n	= PointValueInMoveList(pm->ctrl(i, j).xyz);
-					if ( n >= 0 ) {
-						pSelectedPoints[nIndex++] = &pm->ctrl(i, j).xyz;
-					}
-
-					if ( i & 0x01 || j & 0x01 ) {
-						qglColor3f(1, 0, 1);
-					} else {
-						qglColor3f(0, 1, 0);
-					}
-					qglVertex3fv(pm->ctrl(i, j).xyz.ToFloatPtr());
-					qglEnd();
-				}
-			}
-		}
-
-		if ( nIndex > 0 ) {
-			qglBegin(GL_POINTS);
-			qglColor3f(0, 0, 1);
-			while ( nIndex-- > 0 ) {
-				qglVertex3fv((*pSelectedPoints[nIndex]).ToFloatPtr());
-			}
-			qglEnd();
-		}
-	}
-	if ( bOverlay ) {
-		qglPointSize(6);
-		qglColor3f(0.5, 0.5, 0.5);
-		for ( i = 0 ; i < pm->width ; i++ ) {
-			qglBegin(GL_POINTS);
-			for ( j = 0 ; j < pm->height ; j++ ) {
-				if ( i & 0x01 || j & 0x01 ) {
-					qglColor3f(0.5, 0, 0.5);
-				} else {
-					qglColor3f(0, 0.5, 0);
-				}
-				qglVertex3fv(pm->ctrl(i, j).xyz.ToFloatPtr());
-			}
-			qglEnd();
-		}
-	}
+  for(int i=0; (i+1)<pm->wireframeVertNum; i += 2) {
+    g_qeglobals.lineBuffer.Add(pm->wireframeVerts[i], pm->wireframeVerts[i+1], color);      
+  }
 }
+
+/*
+=================
+DrawPatchMeshSolid
+=================
+*/
+//FIXME: this routine needs to be reorganized.. should be about 1/4 the size and complexity
+void DrawPatchMeshSolid(patchMesh_t *pm, bool bShade, const idMaterial* material) {
+  UpdatePatchGeometry(pm);
+
+  fhTrisBuffer* buffer = g_qeglobals.surfaceBuffer.GetMaterialBuffer(material);
+  buffer->Add(pm->triangleVerts, pm->triangleVertsNum);
+}
+
+void DrawPatchMeshSolid(patchMesh_t *pm, const idVec4& color) {
+  UpdatePatchGeometry(pm);
+
+  fhTrisBuffer* buffer = g_qeglobals.surfaceBuffer.GetColorBuffer();
+
+  for(int i=0; i<pm->triangleVertsNum; i += 3) {
+    buffer->Add(pm->triangleVerts[i].xyz,
+      pm->triangleVerts[i+1].xyz,
+      pm->triangleVerts[i+2].xyz,
+      color);
+  }
+  
+/*
+  int		nDrawMode = g_pParentWnd->GetCamera()->Camera().draw_mode;
+
+  //FIXME: finish consolidating all the patch crap
+  idSurface_Patch	cp(pm->width * 6, pm->height * 6);
+  cp.SetSize(pm->width, pm->height);
+  for (int i = 0; i < pm->width; i++) {
+    for (int j = 0; j < pm->height; j++) {
+      cp[j * cp.GetWidth() + i].xyz = pm->ctrl(i, j).xyz;
+      cp[j * cp.GetWidth() + i].st = pm->ctrl(i, j).st;
+    }
+  }
+
+  if (pm->explicitSubdivisions) {
+    cp.SubdivideExplicit(pm->horzSubdivisions, pm->vertSubdivisions, true);
+  }
+  else {
+    cp.Subdivide(DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_ERROR, DEFAULT_CURVE_MAX_LENGTH, true);
+  }
+
+  const int	width = cp.GetWidth();
+  const int	height = cp.GetHeight();
+
+  fhImmediateMode im;
+  im.Color4fv(color.ToFloatPtr());
+  for (int i = 0; i < width - 1; i++) {
+    im.Begin(GL_QUAD_STRIP);
+    for (int j = 0; j < height; j++) {
+      // v1-v2-v3-v4 makes a quad						
+      const int v1 = j * width + i;
+      const int v2 = v1 + 1;
+      im.TexCoord2fv(cp[v2].st.ToFloatPtr());
+      im.Vertex3fv(cp[v2].xyz.ToFloatPtr());
+      im.TexCoord2fv(cp[v1].st.ToFloatPtr());
+      im.Vertex3fv(cp[v1].xyz.ToFloatPtr());
+    }
+    im.End();
+  }
+ */
+}
+
+
+
 
 /*
 ==================
@@ -2485,21 +2549,16 @@ Patch_DrawXY
 ==================
 */
 void Patch_DrawXY( patchMesh_t *pm ) {
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	if ( pm->bSelected ) {
-		qglColor3fv(g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES].ToFloatPtr());
-		//qglDisable (GL_LINE_STIPPLE);
-		//qglLineWidth (1);
-	} else {
-		qglColor3fv(g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES].ToFloatPtr());
-	}
+	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-	DrawPatchMesh(pm, pm->bSelected, &pm->nListID);
-	qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	if ( pm->bSelected ) {
-		//qglLineWidth (2);
-		//qglEnable (GL_LINE_STIPPLE);
-	}
+  idVec3 color = g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES];
+
+	if ( pm->bSelected )
+    color = g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES];
+
+	DrawPatchMeshWireframe(pm, color);
+  DrawPatchMeshHandles(pm);
+	glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);	
 }
 
 /*
@@ -2507,82 +2566,60 @@ void Patch_DrawXY( patchMesh_t *pm ) {
 Patch_DrawCam
 ==================
 */
-void Patch_DrawCam( patchMesh_t *pm,bool selected ) {
+void Patch_DrawCam( patchMesh_t *pm, bool selected ) {
 
-	int nDrawMode = g_pParentWnd->GetCamera()->Camera().draw_mode;
+	camera_draw_mode nDrawMode = g_pParentWnd->GetCamera()->Camera().draw_mode;
 
-	if ( !selected ) {
-		qglColor3f(1, 1, 1);
-	}
+  idVec3 color = g_qeglobals.d_savedinfo.colors[COLOR_BRUSHES];
+  if(selected)
+    color = g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES];	
 
 	if ( g_bPatchWireFrame || nDrawMode == cd_wire ) {
-		qglDisable(GL_CULL_FACE);
-		qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		glDisable(GL_CULL_FACE);
 		globalImages->BindNull();
-		DrawPatchMesh(pm, pm->bSelected, &pm->nListIDCam, true);
-		qglEnable(GL_CULL_FACE);
+		DrawPatchMeshWireframe(pm, color);
+		glEnable(GL_CULL_FACE);
 	} else {
-		qglEnable(GL_CULL_FACE);
-		qglCullFace(GL_FRONT);
-		qglPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+		glEnable(GL_CULL_FACE);
+		glCullFace(GL_FRONT);
 
-		if ( nDrawMode == cd_texture || nDrawMode == cd_light ) {
-			pm->d_texture->GetEditorImage()->Bind();
+    const idMaterial* material = nullptr;
+		if ( nDrawMode == cd_texture ) {
+      material = pm->d_texture;
 		}
-
-		if ( !selected && pm->d_texture->GetEditorAlpha() != 1.0f ) {
-			qglEnable(GL_BLEND);
-			qglBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    /*
+		if ( !pm->bSelected && pm->d_texture->GetEditorAlpha() != 1.0f ) {
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		}
+		}*/
 
-		DrawPatchMesh(pm, pm->bSelected, &pm->nListIDCam, true);
+		DrawPatchMeshSolid(pm, true, material);
 
-		if ( !selected && pm->d_texture->GetEditorAlpha() != 1.0f ) {
-			qglDisable(GL_BLEND);
-		}
+    if(selected) {
+      //glEnable(GL_BLEND);
+      //DrawPatchMeshSolid(pm, idVec4(color.x, color.y, color.z, 0.25));
+      //DrawPatchMeshSolid(pm, true, material);
+      //glDisable(GL_BLEND);
+      //DrawPatchMeshWireframe(pm, idVec3(1,1,1));
+      //DrawPatchMeshHandles(pm);
+    }
 
-		globalImages->BindNull();
+    /*
+		if ( !pm->bSelected && pm->d_texture->GetEditorAlpha() != 1.0f ) {
+			glDisable(GL_BLEND);
+		}		
 
-		if ( !selected ) {
-			qglCullFace(GL_BACK);
-			qglPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-			qglDisable(GL_BLEND);
-		} else {
-			qglEnable(GL_BLEND);
-			qglColor4f(g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][0], g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][1], g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES][2], 0.25);
-			qglDisable(GL_CULL_FACE);
-		}
-		DrawPatchMesh(pm, pm->bSelected, (selected) ? &pm->nListSelected : &pm->nListIDCam, !selected);
-		qglEnable(GL_CULL_FACE);
+    if(pm->bSelected) {
+      glEnable(GL_BLEND);
+      DrawPatchMeshSolid(pm, idVec4(color.x, color.y, color.z, 0.25) );
+      glDisable(GL_BLEND);
+      DrawPatchMeshWireframe(pm, true, color);
+      DrawPatchMeshHandles(pm);
+    }
+    */
 	}
-
-#if 0 // this paints normal indicators on the ctrl points
-		//--qglDisable (GL_DEPTH_TEST);
-	qglColor3f (1,1,1);
-	for (int i = 0; i < pm->width; i++) {
-		for (int j = 0; j < pm->height; j++) {
-			idVec3 temp;
-			qglBegin (GL_LINES);
-			qglVertex3fv (pm->ctrl(i,j).xyz);
-			VectorMA (pm->ctrl(i,j).xyz, 8, pm->ctrl(i,j].normal, temp);
-			qglVertex3fv (temp);
-			qglEnd ();
-		}
-	}
-	//--qglEnable (GL_DEPTH_TEST);
-#endif
-
 }
-
-
-
-
-void ConvexHullForSection( float section[2][4][7] ) {
-}
-
-void BrushesForSection( float section[2][4][7] ) {
-}
-
 
 /*
 ==================
@@ -2711,6 +2748,8 @@ Patch_Delete
 ==================
 */
 void Patch_Delete( patchMesh_t *p ) {
+  Patch_MakeDirty(p);
+
 	if ( p->pSymbiot ) {
 		p->pSymbiot->pPatch = NULL;
 	}
@@ -4033,7 +4072,6 @@ patchMesh_t * Patch_Duplicate( patchMesh_t *pFrom ) {
 	p->d_texture = pFrom->d_texture;
 	p->bSelected = false;
 	p->bOverlay = false;
-	p->nListID = -1;
 
 	memcpy(p->verts, pFrom->verts, p->width * p->height * sizeof(idDrawVert));
 
@@ -4162,7 +4200,7 @@ void Patch_Thicken( int nAmount,bool bSeam ) {
 		eclass_t*pecNew	= Eclass_ForName("func_static", false);
 		if ( pecNew ) {
 			entity_t*e	= Entity_Create(pecNew);
-			SetKeyValue(e, "type", "patchThick");
+			e->SetKeyValue("type", "patchThick");
 		}
 	}
 

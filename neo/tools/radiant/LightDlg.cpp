@@ -35,6 +35,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../comafx/DialogColorPicker.h"
 #include "LightDlg.h"
 
+#include "../../qteditors/qteditors_public.h"
+
 #ifdef ID_DEBUG_MEMORY
 #undef new
 #undef DEBUG_NEW
@@ -785,7 +787,15 @@ void LightEditorInit( const idDict *spawnArgs ) {
 					"Set r_fullscreen to 0 and vid_restart.\n" );
 		return;
 	}
-
+#if ID_ALLOW_QT
+	if(!spawnArgs && com_editorActive) {
+		const entity_t *e = SingleLightSelected();
+		if(e) {
+			spawnArgs = &e->epairs;
+		}
+	}
+	QtLightEditorInit(spawnArgs);
+#else
 	if ( g_LightDialog == NULL ) {
 		InitAfx();
 		g_LightDialog = new CLightDlg();
@@ -809,6 +819,7 @@ void LightEditorInit( const idDict *spawnArgs ) {
 	if ( spawnArgs ) {
 		// FIXME: select light based on spawn args
 	}
+#endif
 }
 
 void LightEditorRun( void ) {
@@ -831,9 +842,16 @@ void LightEditorShutdown( void ) {
 }
 
 void UpdateLightInspector() {
+#ifdef ID_ALLOW_QT
+	const entity_t *e = SingleLightSelected();
+	if (e) {
+		QtLightEditorInit( &e->epairs );
+	}
+#else
 	if ( g_LightDialog && g_LightDialog->GetSafeHwnd() != NULL ) {
 		g_LightDialog->UpdateDialog(true);   //jhefty - update ALL info about the light, including check boxes
-	}
+	}	
+#endif
 }
 
 void CLightDlg::OnApply() {
@@ -844,7 +862,14 @@ void CLightDlg::OnApply() {
 
 void UpdateLightDialog( float r, float g, float b, float a ) {
 	UpdateRadiantColor( 0.0f, 0.0f, 0.0f, 0.0f );
+#ifdef ID_ALLOW_QT
+	const entity_t *e = SingleLightSelected();
+	if (e) {
+		QtLightEditorInit( &e->epairs );
+	}	
+#else
 	g_LightDialog->UpdateColor( r, g, b, a );
+#endif
 }
 
 void CLightDlg::UpdateColor( float r, float g, float b, float a ) {

@@ -28,8 +28,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../idlib/precompiled.h"
 #pragma hdrstop
 
-// DirectX SDK
-#include <DxErr.h>
+// DirectX SDK. Replaced by WIN SDK, DXTRACE_ERR not available anymore
+//#include <DxErr.h>
+#define DXTRACE_ERR(str,hr)           (hr)
 
 #include <ks.h>
 #include <ksmedia.h>
@@ -517,7 +518,7 @@ bool Sys_LoadOpenAL( void ) {
 		return true;
 	}
 
-	hOpenAL = LoadLibrary( idSoundSystemLocal::s_libOpenAL.GetString() );
+	hOpenAL = LoadLibraryA( idSoundSystemLocal::s_libOpenAL.GetString() );
 	if ( !hOpenAL ) {
 		common->Warning( "LoadLibrary %s failed.", idSoundSystemLocal::s_libOpenAL.GetString() );
 		return false;
@@ -713,13 +714,13 @@ int idAudioBufferWIN32::Play( dword dwPriority, dword dwFlags ) {
 
     // Restore the buffer if it was lost
     if( FAILED( hr = RestoreBuffer( m_apDSBuffer, &bRestored ) ) ) {
-        common->Error( TEXT("RestoreBuffer"), hr );
+        common->Error( "RestoreBuffer", hr );
 	}
 
     if( bRestored ) {
         // The buffer was restored, so we need to fill it with new data
         if( FAILED( hr = FillBufferWithSound( m_apDSBuffer, false ) ) ) {
-            common->Error( TEXT("FillBufferWithSound"), hr );
+            common->Error( "FillBufferWithSound", hr );
 		}
 
         // Make DirectSound do pre-processing on sound effects

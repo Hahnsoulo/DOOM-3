@@ -30,6 +30,8 @@ If you have questions concerning this license or the applicable additional terms
 #pragma hdrstop
 
 #include "tr_local.h"
+#include "ImageData.h"
+#include "ImageProgram.h"
 
 /*
 
@@ -68,6 +70,42 @@ typedef struct mtrParsingData_s {
 	bool			forceOverlays;
 } mtrParsingData_t;
 
+static void replaceBuildinVertexShader(const idStr& name, glslShaderStage_t& glslShaderStage){
+  if(!name.Icmp("heathaze.vfp"))
+    strcpy(glslShaderStage.vertexShaderName, "heathaze.vp"); 
+  else if (!name.Icmp("heathazeWithMask.vfp"))
+    strcpy(glslShaderStage.vertexShaderName, "heathazeWithMask.vp");
+  else if (!name.Icmp("heathazeWithMaskAndVertex.vfp"))
+    strcpy(glslShaderStage.vertexShaderName, "heathazeWithMask.vp");
+  else if (!name.Icmp("colorProcess.vfp"))
+    strcpy(glslShaderStage.vertexShaderName, "colorProcess.vp");
+  else if (!name.Icmp( "enviroSuit.vfp" ))
+	  strcpy( glslShaderStage.vertexShaderName, "envirosuit.vp" );
+  else
+    common->Warning("No GLSL replacement for ARB2 program '%s' found.", name.c_str());
+}
+
+static void replaceBuildinFragmentShader(const idStr& name, glslShaderStage_t& glslShaderStage){
+  if (!name.Icmp("heathaze.vfp"))
+    strcpy(glslShaderStage.fragmentShaderName, "heathaze.fp");
+  else if (!name.Icmp("heathazeWithMask.vfp"))
+    strcpy(glslShaderStage.fragmentShaderName, "heathazeWithMaskAndVertex.fp");
+  else if (!name.Icmp("heathazeWithMaskAndVertex.vfp"))
+    strcpy(glslShaderStage.fragmentShaderName, "heathazeWithMaskAndVertex.fp");
+  else if (!name.Icmp("colorProcess.vfp"))
+    strcpy(glslShaderStage.fragmentShaderName, "colorProcess.fp");
+  else if (!name.Icmp( "enviroSuit.vfp" ))
+	  strcpy( glslShaderStage.fragmentShaderName, "envirosuit.fp" );
+  else
+    common->Warning("No GLSL replacement for ARB2 program '%s' found.", name.c_str());
+}
+
+
+static void R_ParsePastImageProgram( idLexer &src, char* buffer ) {
+	fhImageProgram program;
+	const char* s = program.ParsePastImageProgram( src );
+	strcpy( buffer, s );
+}
 
 /*
 =============
@@ -160,9 +198,9 @@ void idMaterial::FreeData() {
 				delete stages[i].texture.cinematic;
 				stages[i].texture.cinematic = NULL;
 			}
-			if ( stages[i].newStage != NULL ) {
-				Mem_Free( stages[i].newStage );
-				stages[i].newStage = NULL;
+			if ( stages[i].glslStage != NULL ) {
+				Mem_Free(stages[i].glslStage);
+				stages[i].glslStage = NULL;
 			}
 		}
 		R_StaticFree( stages );
@@ -224,7 +262,7 @@ idImage *idMaterial::GetEditorImage( void ) const {
 
 // info parms
 typedef struct {
-	char	*name;
+	const char	*name;
 	int		clearSolid, surfaceFlags, contents;
 } infoParm_t;
 
@@ -602,7 +640,9 @@ int idMaterial::ParseTerm( idLexer &src ) {
 		return EXP_REG_GLOBAL7;
 	}
 	if ( !token.Icmp( "fragmentPrograms" ) ) {
-		return GetExpressionConstant( (float) glConfig.ARBFragmentProgramAvailable );
+		//TODO(johl): remove this completely? where is it used?
+		//return GetExpressionConstant( (float) glConfig.ARBFragmentProgramAvailable );
+		return GetExpressionConstant( (float) true );
 	}
 
 	if ( !token.Icmp( "sound" ) ) {
@@ -739,6 +779,8 @@ idMaterial::ClearStage
 void idMaterial::ClearStage( shaderStage_t *ss ) {
 	ss->drawStateBits = 0;
 	ss->conditionRegister = GetExpressionConstant( 1 );
+  ss->depthBlendMode = DBM_UNDEFINED;
+  ss->depthBlendRange = 0.0f;
 	ss->color.registers[0] =
 	ss->color.registers[1] =
 	ss->color.registers[2] =
@@ -862,159 +904,191 @@ void idMaterial::ParseBlend( idLexer &src, shaderStage_t *stage ) {
 	stage->drawStateBits = srcBlend | dstBlend;
 }
 
+void idMaterial::ParseDepthBlendMode( idLexer &src, shaderStage_t *stage )
+{
+  idToken token;
+
+  if (!src.ReadToken(&token)) {
+    return;
+  }
+
+  if(!token.Icmp("Off")) {
+    stage->depthBlendMode = DBM_OFF;
+    return;
+  }
+
+  if (!token.Icmp("Auto")) {
+    stage->depthBlendMode = DBM_AUTO;
+    return;
+  }
+
+  if (!token.Icmp("ColorAlphaZero")) {
+    stage->depthBlendMode = DBM_COLORALPHA_ZERO;
+    return;
+  }
+
+  if (!token.Icmp("ColorAlphaOne")) {
+    stage->depthBlendMode = DBM_COLORALPHA_ONE;
+    return;
+  }
+
+  if (!token.Icmp("AlphaZero")) {
+    stage->depthBlendMode = DBM_ALPHA_ZERO;
+    return;
+  }
+
+  if (!token.Icmp("AlphaOne")) {
+    stage->depthBlendMode = DBM_ALPHA_ONE;
+    return;
+  }
+
+  common->Warning("bad depth blend mode\n");
+  stage->depthBlendMode = DBM_OFF;
+}
+
+
 /*
 ================
-idMaterial::ParseVertexParm
+idMaterial::ParseShaderParm
 
 If there is a single value, it will be repeated across all elements
 If there are two values, 3 = 0.0, 4 = 1.0
 if there are three values, 4 = 1.0
 ================
 */
-void idMaterial::ParseVertexParm( idLexer &src, newShaderStage_t *newStage ) {
-	idToken				token;
+void idMaterial::ParseShaderParm(idLexer &src, glslShaderStage_t *glslStage) {
+  idToken				token;
 
-	src.ReadTokenOnLine( &token );
-	int	parm = token.GetIntValue();
-	if ( !token.IsNumeric() || parm < 0 || parm >= MAX_VERTEX_PARMS ) {
-		common->Warning( "bad vertexParm number\n" );
-		SetMaterialFlag( MF_DEFAULTED );
-		return;
-	}
-	if ( parm >= newStage->numVertexParms ) {
-		newStage->numVertexParms = parm+1;
-	}
+  src.ReadTokenOnLine(&token);
+  int	parm = token.GetIntValue();
+  if (!token.IsNumeric() || parm < 0 || parm >= MAX_VERTEX_PARMS) {
+    common->Warning("bad vertexParm number\n");
+    SetMaterialFlag(MF_DEFAULTED);
+    return;
+  }
+  if (parm >= glslStage->numShaderParms) {
+    glslStage->numShaderParms = parm + 1;
+  }
 
-	newStage->vertexParms[parm][0] = ParseExpression( src );
+  glslStage->shaderParms[parm][0] = ParseExpression(src);
 
-	src.ReadTokenOnLine( &token );
-	if ( !token[0] || token.Icmp( "," ) ) {
-		newStage->vertexParms[parm][1] =
-		newStage->vertexParms[parm][2] =
-		newStage->vertexParms[parm][3] = newStage->vertexParms[parm][0];
-		return;
-	}
+  src.ReadTokenOnLine(&token);
+  if (!token[0] || token.Icmp(",")) {
+    glslStage->shaderParms[parm][1] =
+      glslStage->shaderParms[parm][2] =
+      glslStage->shaderParms[parm][3] = glslStage->shaderParms[parm][0];
+    return;
+  }
 
-	newStage->vertexParms[parm][1] = ParseExpression( src );
+  glslStage->shaderParms[parm][1] = ParseExpression(src);
 
-	src.ReadTokenOnLine( &token );
-	if ( !token[0] || token.Icmp( "," ) ) {
-		newStage->vertexParms[parm][2] = GetExpressionConstant( 0 );
-		newStage->vertexParms[parm][3] = GetExpressionConstant( 1 );
-		return;
-	}
+  src.ReadTokenOnLine(&token);
+  if (!token[0] || token.Icmp(",")) {
+    glslStage->shaderParms[parm][2] = GetExpressionConstant(0);
+    glslStage->shaderParms[parm][3] = GetExpressionConstant(1);
+    return;
+  }
 
-	newStage->vertexParms[parm][2] = ParseExpression( src );
+  glslStage->shaderParms[parm][2] = ParseExpression(src);
 
-	src.ReadTokenOnLine( &token );
-	if ( !token[0] || token.Icmp( "," ) ) {
-		newStage->vertexParms[parm][3] = GetExpressionConstant( 1 );
-		return;
-	}
+  src.ReadTokenOnLine(&token);
+  if (!token[0] || token.Icmp(",")) {
+    glslStage->shaderParms[parm][3] = GetExpressionConstant(1);
+    return;
+  }
 
-	newStage->vertexParms[parm][3] = ParseExpression( src );
+  glslStage->shaderParms[parm][3] = ParseExpression(src);
 }
-
 
 /*
 ================
-idMaterial::ParseFragmentMap
+idMaterial::ParseShaderMap
 ================
 */
-void idMaterial::ParseFragmentMap( idLexer &src, newShaderStage_t *newStage ) {
-	const char			*str;
-	textureFilter_t		tf;
-	textureRepeat_t		trp;
-	textureDepth_t		td;
-	cubeFiles_t			cubeMap;
-	bool				allowPicmip;
-	idToken				token;
+void idMaterial::ParseShaderMap(idLexer &src, glslShaderStage_t *newStage) {
+  textureFilter_t		tf;
+  textureRepeat_t		trp;
+  textureDepth_t		td;
+  bool					allowPicmip;
+  idToken				token;
 
-	tf = TF_DEFAULT;
-	trp = TR_REPEAT;
-	td = TD_DEFAULT;
-	allowPicmip = true;
-	cubeMap = CF_2D;
+  tf = TF_DEFAULT;
+  trp = TR_REPEAT;
+  td = TD_DEFAULT;
+  allowPicmip = true;
 
-	src.ReadTokenOnLine( &token );
-	int	unit = token.GetIntValue();
-	if ( !token.IsNumeric() || unit < 0 || unit >= MAX_FRAGMENT_IMAGES ) {
-		common->Warning( "bad fragmentMap number\n" );
-		SetMaterialFlag( MF_DEFAULTED );
-		return;
-	}
+  src.ReadTokenOnLine(&token);
+  int	unit = token.GetIntValue();
+  if (!token.IsNumeric() || unit < 0 || unit >= MAX_FRAGMENT_IMAGES) {
+    common->Warning("bad fragmentMap number\n");
+    SetMaterialFlag(MF_DEFAULTED);
+    return;
+  }
 
-	// unit 1 is the normal map.. make sure it gets flagged as the proper depth
-	if ( unit == 1 ) {
-		td = TD_BUMP;
-	}
+  // unit 1 is the normal map.. make sure it gets flagged as the proper depth
+  if (unit == 1) {
+    td = TD_BUMP;
+  }
 
-	if ( unit >= newStage->numFragmentProgramImages ) {
-		newStage->numFragmentProgramImages = unit+1;
-	}
+  if (unit >= newStage->numShaderMaps) {
+    newStage->numShaderMaps = unit + 1;
+  }
 
-	while( 1 ) {
-		src.ReadTokenOnLine( &token );
+  while (1) {
+    src.ReadTokenOnLine(&token);
 
-		if ( !token.Icmp( "cubeMap" ) ) {
-			cubeMap = CF_NATIVE;
-			continue;
-		}
-		if ( !token.Icmp( "cameraCubeMap" ) ) {
-			cubeMap = CF_CAMERA;
-			continue;
-		}
-		if ( !token.Icmp( "nearest" ) ) {
-			tf = TF_NEAREST;
-			continue;
-		}
-		if ( !token.Icmp( "linear" ) ) {
-			tf = TF_LINEAR;
-			continue;
-		}
-		if ( !token.Icmp( "clamp" ) ) {
-			trp = TR_CLAMP;
-			continue;
-		}
-		if ( !token.Icmp( "noclamp" ) ) {
-			trp = TR_REPEAT;
-			continue;
-		}
-		if ( !token.Icmp( "zeroclamp" ) ) {
-			trp = TR_CLAMP_TO_ZERO;
-			continue;
-		}
-		if ( !token.Icmp( "alphazeroclamp" ) ) {
-			trp = TR_CLAMP_TO_ZERO_ALPHA;
-			continue;
-		}
-		if ( !token.Icmp( "forceHighQuality" ) ) {
-			td = TD_HIGH_QUALITY;
-			continue;
-		}
+    if (!token.Icmp("nearest")) {
+      tf = TF_NEAREST;
+      continue;
+    }
+    if (!token.Icmp("linear")) {
+      tf = TF_LINEAR;
+      continue;
+    }
+    if (!token.Icmp("clamp")) {
+      trp = TR_CLAMP;
+      continue;
+    }
+    if (!token.Icmp("noclamp")) {
+      trp = TR_REPEAT;
+      continue;
+    }
+    if (!token.Icmp("zeroclamp")) {
+      trp = TR_CLAMP_TO_ZERO;
+      continue;
+    }
+    if (!token.Icmp("alphazeroclamp")) {
+      trp = TR_CLAMP_TO_ZERO_ALPHA;
+      continue;
+    }
+    if (!token.Icmp("forceHighQuality")) {
+      td = TD_HIGH_QUALITY;
+      continue;
+    }
 
-		if ( !token.Icmp( "uncompressed" ) || !token.Icmp( "highquality" ) ) {
-			if ( !globalImages->image_ignoreHighQuality.GetInteger() ) {
-				td = TD_HIGH_QUALITY;
-			}
-			continue;
-		}
-		if ( !token.Icmp( "nopicmip" ) ) {
-			allowPicmip = false;
-			continue;
-		}
+    if (!token.Icmp("uncompressed") || !token.Icmp("highquality")) {
+      if (!globalImages->image_ignoreHighQuality.GetInteger()) {
+        td = TD_HIGH_QUALITY;
+      }
+      continue;
+    }
+    if (!token.Icmp("nopicmip")) {
+      allowPicmip = false;
+      continue;
+    }
 
-		// assume anything else is the image name
-		src.UnreadToken( &token );
-		break;
-	}
-	str = R_ParsePastImageProgram( src );
+    // assume anything else is the image name
+    src.UnreadToken(&token);
+    break;
+  }
+  char str[MAX_IMAGE_NAME];
+  R_ParsePastImageProgram(src, str);
 
-	newStage->fragmentProgramImages[unit] = 
-		globalImages->ImageFromFile( str, tf, allowPicmip, trp, td, cubeMap );
-	if ( !newStage->fragmentProgramImages[unit] ) {
-		newStage->fragmentProgramImages[unit] = globalImages->defaultImage;
-	}
+  newStage->shaderMap[unit] =
+    globalImages->ImageFromFile(str, tf, allowPicmip, trp, td);
+  if (!newStage->shaderMap[unit]) {
+    newStage->shaderMap[unit] = globalImages->defaultImage;
+  }
 }
 
 /*
@@ -1078,18 +1152,16 @@ An open brace has been parsed
 */
 void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 	idToken				token;
-	const char			*str;
 	shaderStage_t		*ss;
 	textureStage_t		*ts;
 	textureFilter_t		tf;
 	textureRepeat_t		trp;
 	textureDepth_t		td;
-	cubeFiles_t			cubeMap;
 	bool				allowPicmip;
 	char				imageName[MAX_IMAGE_NAME];
 	int					a, b;
-	int					matrix[2][3];
-	newShaderStage_t	newStage;
+	int					matrix[2][3];	
+	glslShaderStage_t	glslStage;
 
 	if ( numStages >= MAX_SHADER_STAGES ) {
 		SetMaterialFlag( MF_DEFAULTED );
@@ -1099,12 +1171,11 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 	tf = TF_DEFAULT;
 	trp = trpDefault;
 	td = TD_DEFAULT;
-	allowPicmip = true;
-	cubeMap = CF_2D;
+	allowPicmip = true;	
 
 	imageName[0] = 0;
-
-	memset( &newStage, 0, sizeof( newStage ) );
+	
+	memset( &glslStage, 0, sizeof(glslStage) );
 
 	ss = &pd->parseStages[numStages];
 	ts = &ss->texture;
@@ -1137,8 +1208,19 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 			continue;
 		}
 
+		if (!token.Icmp( "depthBlendMode" )) {
+			ParseDepthBlendMode( src, ss );
+			continue;
+		}
+
+		if (!token.Icmp( "depthBlendRange" )) {
+			ss->depthBlendRange = src.ParseFloat();
+			continue;
+		}
+
 		if (  !token.Icmp( "map" ) ) {
-			str = R_ParsePastImageProgram( src );
+			char str[MAX_IMAGE_NAME];
+			R_ParsePastImageProgram( src, str );
 			idStr::Copynz( imageName, str, sizeof( imageName ) );
 			continue;
 		}
@@ -1170,7 +1252,7 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 			continue;
 		}
 		if (  !token.Icmp( "screen2" ) ) {
-			ts->texgen = TG_SCREEN2;
+			ts->texgen = TG_SCREEN;
 			continue;
 		}
 		if (  !token.Icmp( "glassWarp" ) ) {
@@ -1209,16 +1291,20 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 		}
 
 		if ( !token.Icmp( "cubeMap" ) ) {
-			str = R_ParsePastImageProgram( src );
-			idStr::Copynz( imageName, str, sizeof( imageName ) );
-			cubeMap = CF_NATIVE;
+			//cubemaps are assembled by an image program,
+			//process 'cubeMap <filename>' as 'map cubeMap(<filename>)'			
+			char str[MAX_IMAGE_NAME];
+			R_ParsePastImageProgram( src, str );			
+			idStr::snPrintf( imageName, MAX_IMAGE_NAME, "cubeMap(%s)", str ); 
 			continue;
 		}
 
 		if ( !token.Icmp( "cameraCubeMap" ) ) {
-			str = R_ParsePastImageProgram( src );
-			idStr::Copynz( imageName, str, sizeof( imageName ) );
-			cubeMap = CF_CAMERA;
+			//cubemaps are assembled by an image program,
+			//process 'cameraCubeMap <filename>' as 'map cameraCubeMap(<filename>)'			
+			char str[MAX_IMAGE_NAME];
+			R_ParsePastImageProgram( src, str );
+			idStr::snPrintf( imageName, MAX_IMAGE_NAME, "cameraCubeMap(%s)", str );
 			continue;
 		}
 
@@ -1488,60 +1574,79 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 			continue;
 		}
 		if ( !token.Icmp( "program" ) ) {
-			if ( src.ReadTokenOnLine( &token ) ) {
-				newStage.vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, token.c_str() );
-				newStage.fragmentProgram = R_FindARBProgram( GL_FRAGMENT_PROGRAM_ARB, token.c_str() );
+			if ( src.ReadTokenOnLine( &token ) ) {				
+				replaceBuildinVertexShader( token, glslStage );
+				replaceBuildinFragmentShader( token, glslStage );
 			}
 			continue;
 		}
 		if ( !token.Icmp( "fragmentProgram" ) ) {
 			if ( src.ReadTokenOnLine( &token ) ) {
-				newStage.fragmentProgram = R_FindARBProgram( GL_FRAGMENT_PROGRAM_ARB, token.c_str() );
+				replaceBuildinFragmentShader( token, glslStage );
 			}
 			continue;
 		}
 		if ( !token.Icmp( "vertexProgram" ) ) {
 			if ( src.ReadTokenOnLine( &token ) ) {
-				newStage.vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, token.c_str() );
+				replaceBuildinVertexShader( token, glslStage );
 			}
 			continue;
 		}
-		if ( !token.Icmp( "megaTexture" ) ) {
-			if ( src.ReadTokenOnLine( &token ) ) {
-				newStage.megaTexture = new idMegaTexture;
-				if ( !newStage.megaTexture->InitFromMegaFile( token.c_str() ) ) {
-					delete newStage.megaTexture;
+		if (!token.Icmp( "fragmentShader" )) {
+			if (src.ReadTokenOnLine( &token )) {
+				strncpy( glslStage.fragmentShaderName, token.c_str(), Min<int>( token.Length(), sizeof(glslStage.fragmentShaderName) - 1 ) );
+			}
+			continue;
+		}
+		if (!token.Icmp( "vertexShader" )) {
+			if (src.ReadTokenOnLine( &token )) {
+				strncpy( glslStage.vertexShaderName, token.c_str(), Min<int>( token.Length(), sizeof(glslStage.vertexShaderName) - 1 ) );
+			}
+			continue;
+		}
+		if (!token.Icmp( "megaTexture" )) {
+			if (src.ReadTokenOnLine( &token )) {
+				assert( false && "this is not ported to GLSL yet" );
+				auto megaTexture = new idMegaTexture;
+				if (!megaTexture->InitFromMegaFile( token.c_str() )) {
+					delete megaTexture;
 					SetMaterialFlag( MF_DEFAULTED );
 					continue;
 				}
-				newStage.vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, "megaTexture.vfp" );
-				newStage.fragmentProgram = R_FindARBProgram( GL_FRAGMENT_PROGRAM_ARB, "megaTexture.vfp" );
+				//auto vertexProgram = R_FindARBProgram( GL_VERTEX_PROGRAM_ARB, "megaTexture.vfp" );
+				//auto fragmentProgram = R_FindARBProgram( GL_FRAGMENT_PROGRAM_ARB, "megaTexture.vfp" );
 				continue;
 			}
 		}
-
-
-		if ( !token.Icmp( "vertexParm" ) ) {
-			ParseVertexParm( src, &newStage );
+		if (!token.Icmp( "shaderParm" )) {
+			ParseShaderParm( src, &glslStage );
 			continue;
 		}
-
-		if (  !token.Icmp( "fragmentMap" ) ) {	
-			ParseFragmentMap( src, &newStage );
+		if (!token.Icmp( "shaderMap" )) {
+			ParseShaderMap( src, &glslStage );
 			continue;
 		}
-
+		if ( !token.Icmp( "vertexParm" ) ) { 	//ARB2 'newstage_t' legacy support
+			ParseShaderParm( src, &glslStage );
+			continue;
+		}
+		if (  !token.Icmp( "fragmentMap" ) ) {	//ARB2 'newstage_t' legacy support
+			ParseShaderMap( src, &glslStage );
+			continue;
+		}
 
 		common->Warning( "unknown token '%s' in material '%s'", token.c_str(), GetName() );
 		SetMaterialFlag( MF_DEFAULTED );
 		return;
 	}
 
+	if (glslStage.fragmentShaderName[0] && glslStage.vertexShaderName[0]) {
+		glslStage.program = R_FindGlslProgram( glslStage.vertexShaderName, glslStage.fragmentShaderName );
 
-	// if we are using newStage, allocate a copy of it
-	if ( newStage.fragmentProgram || newStage.vertexProgram ) {
-		ss->newStage = (newShaderStage_t *)Mem_Alloc( sizeof( newStage ) );
-		*(ss->newStage) = newStage;
+		if (glslStage.program) {
+			ss->glslStage = (glslShaderStage_t *)Mem_Alloc( sizeof(glslStage) );
+			*(ss->glslStage) = glslStage;
+		}
 	}
 
 	// successfully parsed a stage
@@ -1566,11 +1671,11 @@ void idMaterial::ParseStage( idLexer &src, const textureRepeat_t trpDefault ) {
 
 	// now load the image with all the parms we parsed
 	if ( imageName[0] ) {
-		ts->image = globalImages->ImageFromFile( imageName, tf, allowPicmip, trp, td, cubeMap );
+		ts->image = globalImages->ImageFromFile( imageName, tf, allowPicmip, trp, td );
 		if ( !ts->image ) {
 			ts->image = globalImages->defaultImage;
 		}
-	} else if ( !ts->cinematic && !ts->dynamic && !ss->newStage ) {
+	} else if ( !ts->cinematic && !ts->dynamic && !ss->glslStage ) {
 		common->Warning( "material '%s' had stage with no image", GetName() );
 		ts->image = globalImages->defaultImage;
 	}
@@ -1781,18 +1886,10 @@ If there is any error during parsing, defaultShader will be set.
 =================
 */
 void idMaterial::ParseMaterial( idLexer &src ) {
-	idToken		token;
-	int			s;
-	char		buffer[1024];
-	const char	*str;
-	idLexer		newSrc;
-	int			i;
-
-	s = 0;
 
 	numOps = 0;
 	numRegisters = EXP_REG_NUM_PREDEFINED;	// leave space for the parms to be copied in
-	for ( i = 0 ; i < numRegisters ; i++ ) {
+	for ( int i = 0 ; i < numRegisters ; i++ ) {
 		pd->registerIsTemporary[i] = true;		// they aren't constants that can be folded
 	}
 
@@ -1804,6 +1901,8 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 		if ( TestMaterialFlag( MF_DEFAULTED ) ) {	// we have a parse error
 			return;
 		}
+
+		idToken token;
 		if ( !src.ExpectAnyToken( &token ) ) {
 			SetMaterialFlag( MF_DEFAULTED );
 			return;
@@ -1956,10 +2055,9 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 		// specifies the image to use for the third axis of projected
 		// light volumes
 		else if ( !token.Icmp( "lightFalloffImage" ) ) {
-			str = R_ParsePastImageProgram( src );
-			idStr	copy;
-
-			copy = str;	// so other things don't step on it
+			char str[MAX_IMAGE_NAME];
+			R_ParsePastImageProgram( src, str );
+			idStr copy = str;	// so other things don't step on it //TODO(johl): is that still needed?
 			lightFalloffImage = globalImages->ImageFromFile( copy, TF_DEFAULT, false, TR_CLAMP /* TR_CLAMP_TO_ZERO */, TD_DEFAULT );
 			continue;
 		}
@@ -2007,32 +2105,38 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 		}
 		// diffusemap for stage shortcut
 		else if ( !token.Icmp( "diffusemap" ) ) {
-			str = R_ParsePastImageProgram( src );
+			idLexer newSrc;
+			char str[MAX_IMAGE_NAME];
+			char buffer[1024];
+			R_ParsePastImageProgram( src, str );
 			idStr::snPrintf( buffer, sizeof( buffer ), "blend diffusemap\nmap %s\n}\n", str );
 			newSrc.LoadMemory( buffer, strlen(buffer), "diffusemap" );
 			newSrc.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
 			ParseStage( newSrc, trpDefault );
-			newSrc.FreeSource();
 			continue;
 		}
 		// specularmap for stage shortcut
 		else if ( !token.Icmp( "specularmap" ) ) {
-			str = R_ParsePastImageProgram( src );
+			idLexer newSrc;
+			char str[MAX_IMAGE_NAME];
+			char buffer[1024];
+			R_ParsePastImageProgram( src, str );
 			idStr::snPrintf( buffer, sizeof( buffer ), "blend specularmap\nmap %s\n}\n", str );
 			newSrc.LoadMemory( buffer, strlen(buffer), "specularmap" );
 			newSrc.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
 			ParseStage( newSrc, trpDefault );
-			newSrc.FreeSource();
 			continue;
 		}
 		// normalmap for stage shortcut
 		else if ( !token.Icmp( "bumpmap" ) ) {
-			str = R_ParsePastImageProgram( src );
+			idLexer newSrc;
+			char str[MAX_IMAGE_NAME];
+			char buffer[1024];
+			R_ParsePastImageProgram( src, str );
 			idStr::snPrintf( buffer, sizeof( buffer ), "blend bumpmap\nmap %s\n}\n", str );
 			newSrc.LoadMemory( buffer, strlen(buffer), "bumpmap" );
 			newSrc.SetFlags( LEXFL_NOFATALERRORS | LEXFL_NOSTRINGCONCAT | LEXFL_NOSTRINGESCAPECHARS | LEXFL_ALLOWPATHNAMES );
 			ParseStage( newSrc, trpDefault );
-			newSrc.FreeSource();
 			continue;
 		}
 		// DECAL_MACRO for backwards compatibility with the preprocessor macros
@@ -2078,7 +2182,7 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 	// we can't just call ReceivesLighting(), because the stages are still
 	// in temporary form
 	if ( cullType == CT_TWO_SIDED ) {
-		for ( i = 0 ; i < numStages ; i++ ) {
+		for ( int i = 0 ; i < numStages ; i++ ) {
 			if ( pd->parseStages[i].lighting != SL_AMBIENT || pd->parseStages[i].texture.texgen != TG_EXPLICIT ) {
 				if ( cullType == CT_TWO_SIDED ) {
 					cullType = CT_FRONT_SIDED;
@@ -2091,7 +2195,7 @@ void idMaterial::ParseMaterial( idLexer &src ) {
 
 	// currently a surface can only have one unique texgen for all the stages on old hardware
 	texgen_t firstGen = TG_EXPLICIT;
-	for ( i = 0; i < numStages; i++ ) {
+	for ( int i = 0; i < numStages; i++ ) {
 		if ( pd->parseStages[i].texture.texgen != TG_EXPLICIT ) {
 			if ( firstGen == TG_EXPLICIT ) {
 				firstGen = pd->parseStages[i].texture.texgen;
@@ -2227,10 +2331,10 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 			}
 			break;
 		}
-		if ( pStage->newStage ) {
-			for ( int j = 0 ; j < pStage->newStage->numFragmentProgramImages ; j++ ) {
-				if ( pStage->newStage->fragmentProgramImages[j] == globalImages->currentRenderImage ) {
-					if ( sort != SS_PORTAL_SKY ) {
+		if (pStage->glslStage) {
+			for (int j = 0; j < pStage->glslStage->numShaderMaps; j++) {
+				if (pStage->glslStage->shaderMap[j] == globalImages->currentRenderImage || pStage->glslStage->shaderMap[j] == globalImages->currentDepthImage ) {
+					if (sort != SS_PORTAL_SKY) {
 						sort = SS_POST_PROCESS;
 						coverage = MC_TRANSLUCENT;
 					}
@@ -2325,7 +2429,7 @@ bool idMaterial::Parse( const char *text, const int textLength ) {
 idMaterial::Print
 ===================
 */
-char *opNames[] = {
+const char *opNames[] = {
 	"OP_TYPE_ADD",
 	"OP_TYPE_SUBTRACT",
 	"OP_TYPE_MULTIPLY",
@@ -2404,8 +2508,7 @@ void idMaterial::EvaluateRegisters( float *registers, const float shaderParms[MA
 		registers[i] = expressionRegisters[i];
 	}
 
-	// copy the local and global parameters
-	registers[EXP_REG_TIME] = view->floatTime;
+	// copy the local and global parameters	
 	registers[EXP_REG_PARM0] = shaderParms[0];
 	registers[EXP_REG_PARM1] = shaderParms[1];
 	registers[EXP_REG_PARM2] = shaderParms[2];
@@ -2418,14 +2521,17 @@ void idMaterial::EvaluateRegisters( float *registers, const float shaderParms[MA
 	registers[EXP_REG_PARM9] = shaderParms[9];
 	registers[EXP_REG_PARM10] = shaderParms[10];
 	registers[EXP_REG_PARM11] = shaderParms[11];
-	registers[EXP_REG_GLOBAL0] = view->renderView.shaderParms[0];
-	registers[EXP_REG_GLOBAL1] = view->renderView.shaderParms[1];
-	registers[EXP_REG_GLOBAL2] = view->renderView.shaderParms[2];
-	registers[EXP_REG_GLOBAL3] = view->renderView.shaderParms[3];
-	registers[EXP_REG_GLOBAL4] = view->renderView.shaderParms[4];
-	registers[EXP_REG_GLOBAL5] = view->renderView.shaderParms[5];
-	registers[EXP_REG_GLOBAL6] = view->renderView.shaderParms[6];
-	registers[EXP_REG_GLOBAL7] = view->renderView.shaderParms[7];
+	if(view) {
+		registers[EXP_REG_TIME] = view->floatTime;
+		registers[EXP_REG_GLOBAL0] = view->renderView.shaderParms[0];
+		registers[EXP_REG_GLOBAL1] = view->renderView.shaderParms[1];
+		registers[EXP_REG_GLOBAL2] = view->renderView.shaderParms[2];
+		registers[EXP_REG_GLOBAL3] = view->renderView.shaderParms[3];
+		registers[EXP_REG_GLOBAL4] = view->renderView.shaderParms[4];
+		registers[EXP_REG_GLOBAL5] = view->renderView.shaderParms[5];
+		registers[EXP_REG_GLOBAL6] = view->renderView.shaderParms[6];
+		registers[EXP_REG_GLOBAL7] = view->renderView.shaderParms[7];
+	}
 
 	op = ops;
 	for ( i = 0 ; i < numOps ; i++, op++ ) {
@@ -2717,20 +2823,58 @@ const shaderStage_t *idMaterial::GetBumpStage( void ) const {
 
 /*
 ===================
+idMaterial::SurfaceCastsSoftShadow
+===================
+*/
+bool idMaterial::SurfaceCastsSoftShadow() const {
+
+	if ( TestMaterialFlag( MF_FORCESHADOWS ) ) {
+		return true;
+	}
+
+	if ( coverage == MC_TRANSLUCENT ) {
+		return false;
+	}
+
+	if( coverage == MC_PERFORATED ) {
+
+		//WARNING(johl): this is kind of hacky but is necessary to get the 
+		//               original Doom3 materials to work at a decent perf.
+		//               Decals don't cast a shadow, unfortunately there is no
+		//               flag indicating whether a material is decal or not.
+		//               Decals usually are alpha tested and have the 'noshadows'
+		//               flag set, but 'noshadows' is ignored by fhDOOM on alphatested
+		//               surfaces to enable alphatested shadows.
+		//               Current soltuion: Just assume all materials starting with
+		//               'textures/decals/' are decals and dont cast a shadows.
+		static const char* const decalsPrefix = "textures/decals/";
+		static const int decalsPrefixLen = strlen(decalsPrefix);
+
+		if (cullType != CT_TWO_SIDED && (strncmp( GetName(), decalsPrefix, decalsPrefixLen ) == 0)) {
+			return false;
+		}
+
+		return true;
+	}
+
+	return !TestMaterialFlag( MF_NOSHADOWS );
+}
+
+/*
+===================
 idMaterial::ReloadImages
 ===================
 */
-void idMaterial::ReloadImages( bool force ) const
-{
+void idMaterial::ReloadImages( bool force ) const {
 	for ( int i = 0 ; i < numStages ; i++ ) {
-		if ( stages[i].newStage ) {
-			for ( int j = 0 ; j < stages[i].newStage->numFragmentProgramImages ; j++ ) {
-				if ( stages[i].newStage->fragmentProgramImages[j] ) {
-					stages[i].newStage->fragmentProgramImages[j]->Reload( false, force );
+		if (stages[i].glslStage) {
+			for (int j = 0; j < stages[i].glslStage->numShaderMaps; j++) {
+				if (stages[i].glslStage->shaderMap[j]) {
+					stages[i].glslStage->shaderMap[j]->Reload(false, force);
 				}
 			}
 		} else if ( stages[i].texture.image ) {
-			stages[i].texture.image->Reload( false, force );
+				stages[i].texture.image->Reload( false, force );
 		}
 	}
 }

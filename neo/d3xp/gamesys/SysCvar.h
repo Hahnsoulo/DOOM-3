@@ -48,6 +48,9 @@ extern idCVar	g_projectileLights;
 extern idCVar	g_doubleVision;
 extern idCVar	g_muzzleFlash;
 
+extern idCVar   g_projectileLightLodBias;
+extern idCVar   g_muzzleFlashLightLodBias;
+
 extern idCVar	g_disasm;
 extern idCVar	g_debugBounds;
 extern idCVar	g_debugAnim;
@@ -236,7 +239,6 @@ extern idCVar	g_slowmoStepRate;
 extern idCVar	g_testFullscreenFX;
 extern idCVar	g_testHelltimeFX;
 extern idCVar	g_testMultiplayerFX;
-extern idCVar	g_lowresFullscreenFX;
 extern idCVar	g_moveableDamageScale;
 extern idCVar	g_testBloomSpeed;
 extern idCVar	g_testBloomIntensity;

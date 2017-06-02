@@ -438,6 +438,7 @@ idInteraction::idInteraction
 ===============
 */
 idInteraction::idInteraction( void ) {
+	stencilShadowsCreated	= false;
 	numSurfaces				= 0;
 	surfaces				= NULL;
 	entityDef				= NULL;
@@ -543,6 +544,7 @@ void idInteraction::FreeSurfaces( void ) {
 		this->surfaces = NULL;
 	}
 	this->numSurfaces = -1;
+	this->stencilShadowsCreated = false;
 }
 
 /*
@@ -821,14 +823,10 @@ The results of this are cached and valid until the light or entity change.
 ====================
 */
 void idInteraction::CreateInteraction( const idRenderModel *model ) {
-	const idMaterial *	lightShader = lightDef->lightShader;
-	const idMaterial*	shader;
-	bool				interactionGenerated;
-	idBounds			bounds;
-
+	const idMaterial *	lightShader = lightDef->lightShader;	
 	tr.pc.c_createInteractions++;
 
-	bounds = model->Bounds( &entityDef->parms );
+	const idBounds bounds = model->Bounds( &entityDef->parms );
 
 	// if it doesn't contact the light frustum, none of the surfaces will
 	if ( R_CullLocalBox( bounds, entityDef->modelMatrix, 6, lightDef->frustum ) ) {
@@ -852,7 +850,8 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 	numSurfaces = model->NumSurfaces();
 	surfaces = (surfaceInteraction_t *)R_ClearedStaticAlloc( sizeof( *surfaces ) * numSurfaces );
 
-	interactionGenerated = false;
+	bool interactionGenerated = false;
+	const bool isStaticWorldModel = model->IsStaticWorldModel();
 
 	// check each surface in the model
 	for ( int c = 0 ; c < model->NumSurfaces() ; c++ ) {
@@ -867,7 +866,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		}
 
 		// determine the shader for this surface, possibly by skinning
-		shader = surf->shader;
+		const idMaterial* shader = surf->shader;
 		shader = R_RemapShaderBySkin( shader, entityDef->parms.customSkin, entityDef->parms.customShader );
 
 		if ( !shader ) {
@@ -880,7 +879,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		}
 
 		surfaceInteraction_t *sint = &surfaces[c];
-
+		sint->isStaticWorldModel = isStaticWorldModel;
 		sint->shader = shader;
 
 		// save the ambient tri pointer so we can reject lightTri interactions
@@ -905,7 +904,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		}
 
 		// if the interaction has shadows and this surface casts a shadow
-		if ( HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL ) {
+		if ( lightDef->ShadowMode() == shadowMode_t::StencilShadow && HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL ) {
 
 			// if the light has an optimized shadow volume, don't create shadows for any models that are part of the base areas
 			if ( lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() || !r_useOptimizedShadows.GetBool() ) {
@@ -921,6 +920,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 						sint->shadowTris->numShadowIndexesNoFrontCaps = sint->shadowTris->numIndexes;
 					}
 				}
+				stencilShadowsCreated = true;
 				interactionGenerated = true;
 			}
 		}
@@ -928,7 +928,7 @@ void idInteraction::CreateInteraction( const idRenderModel *model ) {
 		// free the cull information when it's no longer needed
 		if ( sint->lightTris != LIGHT_TRIS_DEFERRED ) {
 			R_FreeInteractionCullInfo( sint->cullInfo );
-		}
+		}		
 	}
 
 	// if none of the surfaces generated anything, don't even bother checking?
@@ -1070,6 +1070,12 @@ void idInteraction::AddActiveInteraction( void ) {
 		return;
 	}
 
+	// the light and shadows surfaces are already created but without stencil shadows,
+	// we need to re-create all that if stencil shadows are enabled
+	if (!IsDeferred() && vLight->lightDef->ShadowMode() == shadowMode_t::StencilShadow && !stencilShadowsCreated) {
+		FreeSurfaces();
+	}
+
 	// the dynamic model may have changed since we built the surface list
 	if ( !IsDeferred() && entityDef->dynamicModelFrameCount != dynamicModelFrameCount ) {
 		FreeSurfaces();
@@ -1129,21 +1135,8 @@ void idInteraction::AddActiveInteraction( void ) {
 					// touch the ambient surface so it won't get purged
 					vertexCache.Touch( lightTris->ambientCache );
 
-					// regenerate the lighting cache (for non-vertex program cards) if it has been purged
-					if ( !lightTris->lightingCache ) {
-						if ( !R_CreateLightingCache( entityDef, lightDef, lightTris ) ) {
-							// skip if we are out of vertex memory
-							continue;
-						}
-					}
-					// touch the light surface so it won't get purged
-					// (vertex program cards won't have a light cache at all)
-					if ( lightTris->lightingCache ) {
-						vertexCache.Touch( lightTris->lightingCache );
-					}
-
 					if ( !lightTris->indexCache && r_useIndexBuffers.GetBool() ) {
-						vertexCache.Alloc( lightTris->indexes, lightTris->numIndexes * sizeof( lightTris->indexes[0] ), &lightTris->indexCache, true );
+            lightTris->indexCache = vertexCache.Alloc( lightTris->indexes, lightTris->numIndexes * sizeof( lightTris->indexes[0] ), true );
 					}
 					if ( lightTris->indexCache ) {
 						vertexCache.Touch( lightTris->indexCache );
@@ -1225,7 +1218,7 @@ void idInteraction::AddActiveInteraction( void ) {
 			vertexCache.Touch( shadowTris->shadowCache );
 
 			if ( !shadowTris->indexCache && r_useIndexBuffers.GetBool() ) {
-				vertexCache.Alloc( shadowTris->indexes, shadowTris->numIndexes * sizeof( shadowTris->indexes[0] ), &shadowTris->indexCache, true );
+        shadowTris->indexCache = vertexCache.Alloc( shadowTris->indexes, shadowTris->numIndexes * sizeof( shadowTris->indexes[0] ), true );
 				vertexCache.Touch( shadowTris->indexCache );
 			}
 

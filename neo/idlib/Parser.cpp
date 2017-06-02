@@ -625,7 +625,7 @@ void idParser::AddBuiltinDefines( void ) {
 	define_t *define;
 	struct builtin
 	{
-		char *string;
+		const char *string;
 		int id;
 	} builtin[] = {
 		{ "__LINE__",	BUILTIN_LINE }, 
@@ -709,9 +709,9 @@ int idParser::ExpandBuiltinDefine( idToken *deftoken, define_t *define, idToken 
 			curtime = ctime(&t);
 			(*token) = "\"";
 			token->Append( curtime+4 );
-			token[7] = '\0';
+			token[7] = nullptr;
 			token->Append( curtime+20 );
-			token[10] = '\0';
+			token[10] = nullptr;
 			token->Append( "\"" );
 			free(curtime);
 			token->type = TT_STRING;
@@ -728,7 +728,7 @@ int idParser::ExpandBuiltinDefine( idToken *deftoken, define_t *define, idToken 
 			curtime = ctime(&t);
 			(*token) = "\"";
 			token->Append( curtime+11 );
-			token[8] = '\0';
+			token[8] = nullptr;
 			token->Append( "\"" );
 			free(curtime);
 			token->type = TT_STRING;
@@ -2114,7 +2114,7 @@ int idParser::Directive_eval( void ) {
 	token.whiteSpaceEnd_p = NULL;
 	token.linesCrossed = 0;
 	token.flags = 0;
-	sprintf(buf, "%d", abs(value));
+	sprintf(buf, "%ld", abs(value));
 	token = buf;
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER|TT_LONG|TT_DECIMAL;
@@ -2253,7 +2253,7 @@ int idParser::DollarDirective_evalint( void ) {
 	token.whiteSpaceEnd_p = NULL;
 	token.linesCrossed = 0;
 	token.flags = 0;
-	sprintf( buf, "%d", abs( value ) );
+	sprintf( buf, "%ld", abs( value ) );
 	token = buf;
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER | TT_LONG | TT_DECIMAL | TT_VALUESVALID;

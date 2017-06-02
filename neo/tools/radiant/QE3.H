@@ -45,6 +45,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "afxres.h"
 #include "../../sys/win32/rc/Radiant_resource.h"       // main symbols
 #include "../../sys/win32/win_local.h"
+#include "../../renderer/ImmediateMode.h"
 
 #include "qedefs.h"
 
@@ -73,6 +74,8 @@ const float	HUGE_DISTANCE = 100000;
 #include "InspectorDialog.h"
 #include "undo.h"
 #include "PMESH.H"
+
+#include "rendertools.h"
 
 // the dec offsetof macro doesn't work very well...
 #define myoffsetof(type,identifier) ((size_t)&((type *)0)->identifier)
@@ -150,17 +153,11 @@ typedef struct
 	int			d_num_move_planes;
 	idPlane		*d_move_planes[MAX_MOVE_PLANES];
 	
-	qtexture_t	*d_qtextures;
-	
-	texturewin_t d_texturewin;
-	
-	int	         d_pointfile_display_list;
+	texturewin_t d_texturewin;	
 	
 	LPMRUMENU    d_lpMruMenu;
 	
 	SavedInfo_t  d_savedinfo;
-	
-	int          d_workcount;
 	
 	// connect entities uses the last two brushes selected
 	int			 d_select_count;
@@ -168,8 +165,6 @@ typedef struct
 	idVec3       d_select_translate;    // for dragging w/o making new display lists
 	select_t     d_select_mode;
 	idPointListInterface *selectObject;	// 
-	
-	int		     d_font_list;
 	
 	int          d_parsed_brushes;
 	
@@ -199,22 +194,23 @@ typedef struct
 	//Timo
 	// tells we have surface properties plugin
 	bool	bSurfacePropertiesPlugin;
-	// tells we are using a BSP frontend plugin
-	bool	bBSPFrontendPlugin;
 	
 	// the editor has its own soundWorld and renderWorld, completely distinct from the game
 	idRenderWorld	*rw;
 	idSoundWorld	*sw;
+
+  fhLineBuffer lineBuffer;
+  fhSurfaceBuffer surfaceBuffer;
+  fhPointBuffer pointBuffer;
 } QEGlobals_t;
 
 
 void Pointfile_Delete (void);
-void WINAPI Pointfile_Check (void);
+void Pointfile_Check (void);
 void Pointfile_Next (void);
 void Pointfile_Prev (void);
 void Pointfile_Clear (void);
 void Pointfile_Draw( void );
-void Pointfile_Load( void );
 
 //
 // drag.c
@@ -242,18 +238,6 @@ void SelectVertexByRay (idVec3 org, idVec3 dir);
 
 void ConnectEntities (void);
 
-extern	int	update_bits;
-
-extern	int	screen_width;
-extern	int	screen_height;
-
-extern	HANDLE	bsp_process;
-extern HANDLE g_hBSPOutput;
-extern HANDLE g_hBSPInput;
-
-
-char	*TranslateString (char *buf);
-
 void ProjectDialog (void);
 
 void FillTextureMenu (CStringArray* pArray = NULL);
@@ -266,32 +250,9 @@ BOOL CALLBACK Win_Dialog (
     LPARAM lParam 	// second message parameter
 );
 
-
-//
-// win_cam.c
-//
-void WCam_Create (HINSTANCE hInstance);
-
-
-//
-// win_xy.c
-//
-void WXY_Create (HINSTANCE hInstance);
-
-//
-// win_z.c
-//
-void WZ_Create (HINSTANCE hInstance);
-
-//
-// win_ent.c
-//
-
-
 //
 // win_main.c
 //
-void Main_Create (HINSTANCE hInstance);
 extern bool SaveWindowState(HWND hWnd, const char *pszName);
 extern bool LoadWindowState(HWND hWnd, const char *pszName);
 
@@ -382,15 +343,6 @@ void BPMatDump(float A[2][3]);
 #endif
 
 
-//
-// eclass.cpp
-//
-extern bool parsing_single;
-extern bool eclass_found;
-extern eclass_t *eclass_e;
-void Eclass_ScanFile( char *filename );
-void FillClassList (void);
-
 extern bool g_bShowLightVolumes;
 extern bool g_bShowLightTextures;
 extern const idMaterial *Texture_LoadLight(const char *name);
@@ -407,55 +359,36 @@ extern CPrefsDlg& g_PrefsDlg;
 extern CFindTextureDlg& g_dlgFind;
 extern idCVar radiant_entityMode;
 
-// layout styles
-#define QR_SPLIT 0
-#define QR_QE4 1
-#define QR_4WAY 2
-#define QR_SPLITZ 3
-
-
 // externs
 extern void AddSlash(CString&);
-extern void DLLBuildDone();
 extern void CleanUpEntities();
 extern void QE_CountBrushesAndUpdateStatusBar();
 extern void	QE_CheckAutoSave();
-extern qtexture_t	*notexture;
-extern qtexture_t	*current_texture;
 extern bool SaveWindowState(HWND hWnd, const char *pszName);
 extern void Map_Snapshot();
-extern void WXY_Print();
-extern void AddProp( void );
-extern int inspector_mode;
 extern bool g_bRotateMode;
 extern bool g_bClipMode;
 extern bool g_bScaleMode;
 extern int g_nScaleHow;
 extern bool g_bPathMode;
 extern void RunScript(char* pBuffer);
-extern HINSTANCE g_hOpenGL32;
 
 extern void FindReplaceTextures(const char* pFind, const char* pReplace, bool bSelected, bool bForce);
 extern void DoProjectSettings();
 extern bool region_active;
-extern void	Texture_ShowDirectory (char* pPath, bool Linked = false);
 extern void Map_ImportFile (char *filename);
 extern void Map_SaveSelected(char* pFilename);
-extern bool g_bNewFace;
 extern bool g_bSwitch;
 extern brush_t g_brFrontSplits;
 extern brush_t g_brBackSplits;
 extern CClipPoint g_Clip1;
 extern CClipPoint g_Clip2;
 extern brush_t* g_pSplitList;
-extern CClipPoint g_PathPoints[256];
-extern void AcquirePath(int nCount, PFNPathCallback* pFunc);
 extern bool g_bScreenUpdates;
 extern SCommandInfo g_Commands[];
 extern int g_nCommandCount;
 extern SKeyInfo g_Keys[];
 extern int g_nKeyCount;
-extern int inspector_mode;
 extern const char	*bsp_commands[256];
 extern void HandlePopup(CWnd* pWindow, unsigned int uId);
 extern z_t z;
@@ -477,11 +410,7 @@ int PointInMoveList( idVec3 *pf );
 
 extern bool ByeByeSurfaceDialog();
 extern void UpdateSurfaceDialog();
-extern void UpdateLightInspector();
-
-BOOL UpdateEntitySel(eclass_t *pec);	
-void SetInspectorMode(int iType);
-BOOL GetSelectAllCriteria(CString &strKey, CString &strVal);
+extern void UpdateLightInspector();	
 
 int GetCvarInt(const char *name, const int def);
 const char *GetCvarString(const char *name, const char *def);

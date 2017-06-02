@@ -40,6 +40,9 @@ If you have questions concerning this license or the applicable additional terms
 #define PROC_FILE_EXT				"proc"
 #define	PROC_FILE_ID				"mapProcFile003"
 
+#define OCL_FILE_EXT				"ocl"
+#define	OCL_FILE_ID					"mapOclFile002"
+
 // shader parms
 const int MAX_GLOBAL_SHADER_PARMS	= 12;
 
@@ -76,6 +79,12 @@ const int MAX_RENDERENTITY_GUI		= 3;
 
 typedef bool(*deferredEntityCallback_t)( renderEntity_s *, const renderView_s * );
 
+enum class shadowMode_t {
+	Default = 0,
+	NoShadows = 1,
+	StencilShadow = 2,
+	ShadowMap = 3
+};
 
 typedef struct renderEntity_s {
 	idRenderModel *			hModel;				// this can only be null if callback is set
@@ -172,6 +181,11 @@ typedef struct renderLight_s {
 	// updates
 	bool					noShadows;			// (should we replace this with material parameters on the shader?)
 	bool					noSpecular;			// (should we replace this with material parameters on the shader?)
+	shadowMode_t            shadowMode;
+	float                   shadowSoftness;
+	float                   shadowBrightness;
+	float                   shadowPolygonOffsetFactor;
+	float                   shadowPolygonOffsetBias;
 
 	bool					pointLight;			// otherwise a projection light (should probably invert the sense of this, because points are way more common)
 	bool					parallel;			// lightCenter gives the direction to the light at infinity
@@ -192,10 +206,12 @@ typedef struct renderLight_s {
 	// for the light against all the _area* models in the map.  The renderer will
 	// ignore this value if the light has been moved after initial creation
 	idRenderModel *			prelightModel;
+	idRenderModel*          occlusionModel;
 
 	// muzzle flash lights will not cast shadows from player and weapon world models
 	int						lightId;
 
+	int                     smLodBias;
 
 	const idMaterial *		shader;				// NULL = either lights/defaultPointLight or lights/defaultProjectedLight
 	float					shaderParms[MAX_ENTITY_SHADER_PARMS];		// can be used in any way by shader

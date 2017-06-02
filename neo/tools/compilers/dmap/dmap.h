@@ -177,10 +177,17 @@ typedef struct tree_s {
 
 #define	MAX_QPATH			256			// max length of a game pathname
 
+struct mapSurface_t {
+	srfTriangles_t* tris;
+	const idMaterial* material;
+};
+
 typedef struct {
 	idRenderLightLocal	def;
 	char		name[MAX_QPATH];		// for naming the shadow volume surface and interactions
-	srfTriangles_t	*shadowTris;
+	srfTriangles_t* shadowTris;
+
+	mapSurface_t occluders[128];
 } mapLight_t;
 
 #define	MAX_GROUP_LIGHTS	16
@@ -230,6 +237,69 @@ typedef enum {
 	SO_SIL_OPTIMIZE		// 5
 } shadowOptLevel_t;
 
+class fhDmapTimingStats
+{
+public:
+  fhDmapTimingStats() {
+    Reset();
+  }
+
+  void Reset() {
+    num = 0;
+    sum = 0;
+    min = 0;
+    max = 0;
+  }
+
+  void Start() {
+    start_ms = Sys_Milliseconds();
+  }
+
+  void Stop() {
+    int ms = Sys_Milliseconds() - start_ms;
+
+    sum += ms;
+
+    if (ms < min)
+      min = ms;
+
+    if (ms > max)
+      max = ms;
+
+    ++num;
+  }
+
+  int Min() const {
+    return min;
+  }
+
+  int Max() const {
+    return max;
+  }
+
+  int Num() const {
+    return num;
+  }
+
+  int Sum() const {
+    return sum;
+  }
+
+  float Avg() const {
+    if (num <= 0)
+      return 0.0f;
+
+    return static_cast<float>(sum) / num;
+  }
+
+private:
+  int start_ms;
+  int sum;
+  int min;
+  int max;
+  int num;
+};
+
 typedef struct {
 	// mapFileBase will contain the qpath without any extension: "maps/test_box"
 	char		mapFileBase[1024];
@@ -247,7 +317,6 @@ typedef struct {
 
 	bool	verbose;
 
-	bool	glview;
 	bool	noOptimize;
 	bool	verboseentities;
 	bool	noCurves;
@@ -261,11 +330,24 @@ typedef struct {
 	shadowOptLevel_t	shadowOptLevel;
 	bool	noShadow;			// don't create optimized shadow volumes
 
+	bool    exportObj;
+
 	idBounds	drawBounds;
 	bool	drawflag;
 
 	int		totalShadowTriangles;
 	int		totalShadowVerts;
+
+  fhDmapTimingStats timingMakeStructural;
+  fhDmapTimingStats timingMakeTreePortals;
+  fhDmapTimingStats timingFilterBrushesIntoTree;
+  fhDmapTimingStats timingFloodAndFill;
+  fhDmapTimingStats timingClipSidesByTree;
+  fhDmapTimingStats timingFloodAreas;
+  fhDmapTimingStats timingPutPrimitivesInAreas;
+  fhDmapTimingStats timingPreLight;
+  fhDmapTimingStats timingOptimize;
+  fhDmapTimingStats timingFixTJunctions;
 } dmapGlobals_t;
 
 extern dmapGlobals_t dmapGlobals;
@@ -318,10 +400,6 @@ void		FreeDMapFile( void );
 // draw.cpp -- draw debug views either directly, or through glserv.exe
 
 void Draw_ClearWindow( void );
-void DrawWinding( const idWinding *w );
-void DrawAuxWinding( const idWinding *w );
-
-void DrawLine( idVec3 v1, idVec3 v2, int color );
 
 void GLS_BeginScene( void );
 void GLS_Winding( const idWinding *w, int code );
@@ -349,13 +427,6 @@ void FillOutside( uEntity_t *e );
 void FloodAreas( uEntity_t *e );
 void MakeTreePortals( tree_t *tree );
 void FreePortal( uPortal_t *p );
-
-//=============================================================================
-
-// glfile.cpp -- write a debug file to be viewd with glview.exe
-
-void OutputWinding( idWinding *w, idFile *glview );
-void WriteGLView( tree_t *tree, char *source );
 
 //=============================================================================
 
@@ -460,7 +531,6 @@ mapTri_t	*CopyMapTri( const mapTri_t *tri );
 float		MapTriArea( const mapTri_t *tri );
 mapTri_t	*RemoveBadTris( const mapTri_t *tri );
 void		BoundTriList( const mapTri_t *list, idBounds &b );
-void		DrawTri( const mapTri_t *tri );
 void		FlipTriList( mapTri_t *tris );
 void		TriVertsFromOriginal( mapTri_t *tri, const mapTri_t *original );
 void		PlaneForTri( const mapTri_t *tri, idPlane &plane );
@@ -473,7 +543,8 @@ void		ClipTriList( const mapTri_t *list, const idPlane &plane, float epsilon, ma
 // output.cpp
 
 srfTriangles_t	*ShareMapTriVerts( const mapTri_t *tris );
-void WriteOutputFile( void );
+void WriteProcFile( void );
+void WriteOclFile( void );
 
 //=============================================================================
 
@@ -483,3 +554,4 @@ srfTriangles_t *CreateLightShadow( optimizeGroup_t *shadowerGroups, const mapLig
 void		FreeBeamTree( struct beamTree_s *beamTree );
 
 void		CarveTriByBeamTree( const struct beamTree_s *beamTree, const mapTri_t *tri, mapTri_t **lit, mapTri_t **unLit );
+

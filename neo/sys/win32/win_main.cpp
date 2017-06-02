@@ -47,6 +47,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "win_local.h"
 #include "rc/CreateResourceIDs.h"
 #include "../../renderer/tr_local.h"
+#include "../../../qteditors/qteditors_public.h"
 
 idCVar Win32Vars_t::sys_arch( "sys_arch", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar Win32Vars_t::sys_cpustring( "sys_cpustring", "detect", CVAR_SYSTEM | CVAR_INIT, "" );
@@ -396,7 +397,7 @@ void Sys_Printf( const char *fmt, ... ) {
 	msg[sizeof(msg)-1] = '\0';
 
 	if ( win32.win_outputDebugString.GetBool() ) {
-		OutputDebugString( msg );
+		OutputDebugStringA( msg );
 	}
 	if ( win32.win_outputEditString.GetBool() ) {
 		Conbuf_AppendText( msg );
@@ -418,7 +419,7 @@ void Sys_DebugPrintf( const char *fmt, ... ) {
 	msg[ sizeof(msg)-1 ] = '\0';
 	va_end( argptr );
 
-	OutputDebugString( msg );
+	OutputDebugStringA( msg );
 }
 
 /*
@@ -432,7 +433,7 @@ void Sys_DebugVPrintf( const char *fmt, va_list arg ) {
 	idStr::vsnPrintf( msg, MAXPRINTMSG-1, fmt, arg );
 	msg[ sizeof(msg)-1 ] = '\0';
 
-	OutputDebugString( msg );
+	OutputDebugStringA( msg );
 }
 
 /*
@@ -482,6 +483,20 @@ ID_TIME_T Sys_FileTimeStamp( FILE *fp ) {
 	return (long) st.st_mtime;
 }
 
+bool Sys_IsFile(const char* path) {
+  DWORD dwAttrib = GetFileAttributesA(path);
+
+  return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
+    !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+bool Sys_IsDirectory(const char* path) {
+  DWORD dwAttrib = GetFileAttributesA(path);
+
+  return (dwAttrib != INVALID_FILE_ATTRIBUTES &&
+    (dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
 /*
 ==============
 Sys_Cwd
@@ -505,14 +520,6 @@ const char *Sys_DefaultCDPath( void ) {
 	return "";
 }
 
-/*
-==============
-Sys_DefaultBasePath
-==============
-*/
-const char *Sys_DefaultBasePath( void ) {
-	return Sys_Cwd();
-}
 
 /*
 ==============
@@ -530,7 +537,7 @@ Sys_EXEPath
 */
 const char *Sys_EXEPath( void ) {
 	static char exe[ MAX_OSPATH ];
-	GetModuleFileName( NULL, exe, sizeof( exe ) - 1 );
+	GetModuleFileNameA( NULL, exe, sizeof( exe ) - 1 );
 	return exe;
 }
 
@@ -625,7 +632,7 @@ void Sys_SetClipboardData( const char *string ) {
 		return;
 	}
 	// copy text into allocated memory block
-	lstrcpy( PMem, string );
+	lstrcpyA( PMem, string );
 	// unlock allocated memory
 	::GlobalUnlock( HMem );
 	// open Clipboard
@@ -657,11 +664,11 @@ Sys_DLL_Load
 */
 int Sys_DLL_Load( const char *dllName ) {
 	HINSTANCE	libHandle;
-	libHandle = LoadLibrary( dllName );
+	libHandle = LoadLibraryA( dllName );
 	if ( libHandle ) {
 		// since we can't have LoadLibrary load only from the specified path, check it did the right thing
 		char loadedPath[ MAX_OSPATH ];
-		GetModuleFileName( libHandle, loadedPath, sizeof( loadedPath ) - 1 );
+		GetModuleFileNameA( libHandle, loadedPath, sizeof( loadedPath ) - 1 );
 		if ( idStr::IcmpPath( dllName, loadedPath ) ) {
 			Sys_Printf( "ERROR: LoadLibrary '%s' wants to load '%s'\n", dllName, loadedPath );
 			Sys_DLL_Unload( (int)libHandle );
@@ -882,7 +889,7 @@ static void Sys_AsyncThread( void *parm ) {
 		// this will trigger 60 times a second
 		int r = WaitForSingleObject( hTimer, 100 );
 		if ( r != WAIT_OBJECT_0 ) {
-			OutputDebugString( "idPacketServer::PacketServerInterrupt: bad wait return" );
+			OutputDebugStringA( "idPacketServer::PacketServerInterrupt: bad wait return" );
 		}
 #endif
 
@@ -1167,34 +1174,6 @@ void Win_Frame( void ) {
 	}
 }
 
-extern "C" { void _chkstk( int size ); };
-void clrstk( void );
-
-/*
-====================
-TestChkStk
-====================
-*/
-void TestChkStk( void ) {
-	int		buffer[0x1000];
-
-	buffer[0] = 1;
-}
-
-/*
-====================
-HackChkStk
-====================
-*/
-void HackChkStk( void ) {
-	DWORD	old;
-	VirtualProtect( _chkstk, 6, PAGE_EXECUTE_READWRITE, &old );
-	*(byte *)_chkstk = 0xe9;
-	*(int *)((int)_chkstk+1) = (int)clrstk - (int)_chkstk - 5;
-
-	TestChkStk();
-}
-
 /*
 ====================
 GetExceptionCodeInfo
@@ -1244,7 +1223,7 @@ void EmailCrashReport( LPSTR messageText ) {
 
 	lastEmailTime = Sys_Milliseconds();
 
-	HINSTANCE mapi = LoadLibrary( "MAPI32.DLL" ); 
+	HINSTANCE mapi = LoadLibraryA( "MAPI32.DLL" ); 
 	if( mapi ) {
 		MAPISendMail = ( LPMAPISENDMAIL )GetProcAddress( mapi, "MAPISendMail" );
 		if( MAPISendMail ) {
@@ -1452,7 +1431,13 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
 		// set exceptions, even if some crappy syscall changes them!
 		Sys_FPU_EnableExceptions( TEST_FPU_EXCEPTIONS );
 
+		// update Qt based GUIs
+#ifdef ID_ALLOW_QT
+		QtRun();
+#endif
+
 #ifdef ID_ALLOW_TOOLS
+
 		if ( com_editors ) {
 			if ( com_editors & EDITOR_GUI ) {
 				// GUI editor
@@ -1506,42 +1491,6 @@ int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLin
 }
 
 /*
-====================
-clrstk
-
-I tried to get the run time to call this at every function entry, but
-====================
-*/
-static int	parmBytes;
-__declspec( naked ) void clrstk( void ) {
-	// eax = bytes to add to stack
-	__asm {
-		mov		[parmBytes],eax
-        neg     eax                     ; compute new stack pointer in eax
-        add     eax,esp
-        add     eax,4
-        xchg    eax,esp
-        mov     eax,dword ptr [eax]		; copy the return address
-        push    eax
-        
-        ; clear to zero
-        push	edi
-        push	ecx
-        mov		edi,esp
-        add		edi,12
-        mov		ecx,[parmBytes]
-		shr		ecx,2
-        xor		eax,eax
-		cld
-        rep	stosd
-        pop		ecx
-        pop		edi
-        
-        ret
-	}
-}
-
-/*
 ==================
 idSysLocal::OpenURL
 ==================
@@ -1557,7 +1506,7 @@ void idSysLocal::OpenURL( const char *url, bool doexit ) {
 
 	common->Printf("Open URL: %s\n", url);
 
-	if ( !ShellExecute( NULL, "open", url, NULL, NULL, SW_RESTORE ) ) {
+	if ( !ShellExecuteA( NULL, "open", url, NULL, NULL, SW_RESTORE ) ) {
 		common->Error( "Could not open url: '%s' ", url );
 		return;
 	}
@@ -1579,8 +1528,8 @@ idSysLocal::StartProcess
 ==================
 */
 void idSysLocal::StartProcess( const char *exePath, bool doexit ) {
-	TCHAR				szPathOrig[_MAX_PATH];
-	STARTUPINFO			si;
+	char				szPathOrig[_MAX_PATH];
+	STARTUPINFOA			si;
 	PROCESS_INFORMATION	pi;
 
 	ZeroMemory( &si, sizeof(si) );
@@ -1588,7 +1537,7 @@ void idSysLocal::StartProcess( const char *exePath, bool doexit ) {
 
 	strncpy( szPathOrig, exePath, _MAX_PATH );
 
-	if( !CreateProcess( NULL, szPathOrig, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ) ) {
+	if( !CreateProcessA( NULL, szPathOrig, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi ) ) {
         common->Error( "Could not start process: '%s' ", szPathOrig );
 	    return;
 	}

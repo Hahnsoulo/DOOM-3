@@ -8,7 +8,7 @@ This file is part of the Doom 3 GPL Source Code (?Doom 3 Source Code?).
 
 Doom 3 Source Code is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
+the Free SoftwareF oundation, either version 3 of the License, or
 (at your option) any later version.
 
 Doom 3 Source Code is distributed in the hope that it will be useful,
@@ -28,9 +28,65 @@ If you have questions concerning this license or the applicable additional terms
 
 // brush.h
 
+struct editorModel_t {
+  idRenderModel* model;
+  idBounds bounds;
+  bool drawBounds;
+};
+
+struct entity_t;
+
+struct brush_t {
+	brush_t	*prev, *next;	// links in active/selected
+	brush_t	*oprev, *onext;	// links in entity
+	brush_t *   list;				//keep a handy link to the list its in
+	entity_t	*owner;
+	idVec3 mins, maxs;
+
+	idVec3	lightCenter;			// for moving the shading center of point lights
+	idVec3	lightRight;
+	idVec3	lightTarget;
+	idVec3	lightUp;
+	idVec3	lightRadius;
+	idVec3	lightOffset;
+	idVec3	lightColor;
+	idVec3	lightStart;
+	idVec3	lightEnd;
+	bool	pointLight;
+	bool	startEnd;
+	int		lightTexture;
+
+	bool	trackLightOrigin;	// this brush is a special case light brush
+	bool	entityModel;
+
+	face_t  *brush_faces;
+
+	//
+	// curve brush extensions
+	// all are derived from brush_faces
+	bool	hiddenBrush;
+	bool	forceWireFrame;
+	bool	forceVisibile;
+
+	patchMesh_t *pPatch;
+	entity_t *pUndoOwner;
+
+	int undoId;						//undo ID
+	int redoId;						//redo ID
+	int ownerId;					//entityId of the owner entity for undo
+
+	int numberId;         // brush number
+
+	idRenderModel	*modelHandle;
+	mutable idRenderModel *animSnapshotModel;
+
+	// brush primitive only
+	idDict	epairs;
+};
+
 brush_t *	Brush_Alloc();
 void		Brush_Free (brush_t *b, bool bRemoveNode = true);
-int			Brush_MemorySize(brush_t *b);
+int			Brush_MemorySize(const brush_t *b);
 void		Brush_MakeSided (int sides);
 void		Brush_MakeSidedCone (int sides);
 void		Brush_Move (brush_t *b, const idVec3 move, bool bSnap = true, bool updateOrigin = true);
@@ -45,8 +101,8 @@ void		Brush_BuildWindings( brush_t *b, bool bSnap = true, bool keepOnPlaneWindin
 brush_t *	Brush_Clone (brush_t *b);
 brush_t *	Brush_FullClone(brush_t *b);
 brush_t *	Brush_Create (idVec3 mins, idVec3 maxs, texdef_t *texdef);
-void		Brush_Draw( brush_t *b, bool bSelected = false);
-void		Brush_DrawXY(brush_t *b, int nViewType, bool bSelected = false, bool ignoreViewType = false);
+void		Brush_Draw( const brush_t *b, bool bSelected);
+void		Brush_DrawXY(brush_t *b, int nViewType, bool bSelected, const idVec3& color);
 void		Brush_SplitBrushByFace (brush_t *in, face_t *f, brush_t **front, brush_t **back);
 void		Brush_SelectFaceForDragging (brush_t *b, face_t *f, bool shear);
 void		Brush_SetTexture (brush_t *b, texdef_t *texdef, brushprimit_texdef_t *brushprimit_texdef, bool bFitScale = false);
@@ -63,15 +119,20 @@ void		Brush_Print(brush_t* b);
 void		Brush_FitTexture( brush_t *b, float height, float width );
 void		Brush_SetEpair(brush_t *b, const char *pKey, const char *pValue);
 const char *Brush_GetKeyValue(brush_t *b, const char *pKey);
-const char *Brush_Name(brush_t *b);
 void		Brush_RebuildBrush(brush_t *b, idVec3 vMins, idVec3 vMaxs, bool patch = true);
 void		Brush_GetBounds( brush_t *b, idBounds &bo );
+editorModel_t Brush_GetEditorModel(const brush_t* b);
 
 face_t *	Face_Alloc( void );
 void		Face_Free( face_t *f );
 face_t *	Face_Clone (face_t *f);
 void		Face_MakePlane (face_t *f);
-void		Face_Draw( face_t *face );
+
+class fhImmediateMode;
+void		Face_Draw( const face_t *face, const idVec4& color );
+void		Face_DrawOutline( const face_t *face, const idVec3& color );
+void    Brush_AddBrushLines(fhImmediateMode& im, const brush_t* brush, const brush_t* end, int viewType);
+
 void		Face_TextureVectors (face_t *f, float STfromXYZ[2][4]);
 void		Face_FitTexture( face_t * face, float height, float width );
 void		SetFaceTexdef (brush_t *b, face_t *f, texdef_t *texdef, brushprimit_texdef_t *brushprimit_texdef, bool bFitScale = false);

@@ -73,6 +73,7 @@ public:
 	idVec2 &		operator/=( const idVec2 &a );
 	idVec2 &		operator/=( const float a );
 	idVec2 &		operator*=( const float a );
+	idVec2 &		operator*=( const idVec2 &a );
 
 	friend idVec2	operator*( const float a, const idVec2 b );
 
@@ -294,6 +295,13 @@ ID_INLINE idVec2 &idVec2::operator*=( const float a ) {
 	return *this;
 }
 
+ID_INLINE idVec2 &idVec2::operator*=(const idVec2 &a) {
+	x *= a.x;
+	y *= a.y;
+
+	return *this;
+}
+
 ID_INLINE int idVec2::GetDimension( void ) const {
 	return 2;
 }
@@ -355,6 +363,7 @@ public:
 	float			Length( void ) const;
 	float			LengthSqr( void ) const;
 	float			LengthFast( void ) const;
+	idVec3			Normalized( void ) const;
 	float			Normalize( void );				// returns length
 	float			NormalizeFast( void );			// returns length
 	idVec3 &		Truncate( float length );		// cap length
@@ -643,6 +652,12 @@ ID_INLINE float idVec3::LengthFast( void ) const {
 	return sqrLength * idMath::RSqrt( sqrLength );
 }
 
+ID_INLINE idVec3 idVec3::Normalized( void ) const {
+	idVec3 v = *this;
+	v.Normalize();
+	return v;
+}
+
 ID_INLINE float idVec3::Normalize( void ) {
 	float sqrLength, invLength;
 
@@ -812,8 +827,10 @@ public:
 	float			z;
 	float			w;
 
-					idVec4( void );
-					explicit idVec4( const float x, const float y, const float z, const float w );
+	idVec4() = default;
+	explicit idVec4( const float x, const float y, const float z, const float w );
+    explicit idVec4( const idVec3& xyz, const float w );
+	explicit idVec4( const float* xyzw );
 
 	void 			Set( const float x, const float y, const float z, const float w );
 	void			Zero( void );
@@ -855,19 +872,37 @@ public:
 	const char *	ToString( int precision = 2 ) const;
 
 	void			Lerp( const idVec4 &v1, const idVec4 &v2, const float l );
+
+	static const idVec4 zero;
+	static const idVec4 one;
+	static const idVec4 negOne;
+	static const idVec4 identityS;
+	static const idVec4 identityT;
 };
 
 extern idVec4 vec4_origin;
 #define vec4_zero vec4_origin
-
-ID_INLINE idVec4::idVec4( void ) {
-}
 
 ID_INLINE idVec4::idVec4( const float x, const float y, const float z, const float w ) {
 	this->x = x;
 	this->y = y;
 	this->z = z;
 	this->w = w;
+}
+
+ID_INLINE idVec4::idVec4(const idVec3& xyz, const float w) {
+  this->x = xyz.x;
+  this->y = xyz.y;
+  this->z = xyz.z;
+  this->w = w;
+}
+
+ID_INLINE idVec4::idVec4( const float* xyzw ) {
+	assert(xyzw);
+	this->x = xyzw[0];
+	this->y = xyzw[1];
+	this->z = xyzw[2];
+	this->w = xyzw[3];
 }
 
 ID_INLINE void idVec4::Set( const float x, const float y, const float z, const float w ) {
